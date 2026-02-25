@@ -22,6 +22,13 @@ export default tseslint.config(
 		},
 	},
 	...obsidianmd.configs.recommended,
+	{
+		files: ['src/copilot.ts'],
+		rules: {
+			'import/no-nodejs-modules': 'off',
+			'import/no-extraneous-dependencies': 'off',
+		},
+	},
 	globalIgnores([
 		"node_modules",
 		"dist",
