@@ -4,6 +4,7 @@ import {
 	WorkspaceLeaf,
 	MarkdownRenderer,
 	Notice,
+	Modal,
 	normalizePath,
 	setIcon,
 	TFile,
@@ -20,6 +21,8 @@ import type {
 	MCPServerConfig,
 	ModelInfo,
 	MessageOptions,
+	PermissionRequest,
+	PermissionRequestResult,
 } from './copilot';
 import type {AgentConfig, SkillInfo, McpServerEntry, ChatMessage, ChatAttachment} from './types';
 import {loadAgents, loadSkills, loadMcpServers} from './configLoader';
@@ -83,6 +86,65 @@ class FolderPickerModal extends FuzzySuggestModal<TFolder> {
 	}
 }
 
+// ── Tool-approval modal ─────────────────────────────────────────
+
+class ToolApprovalModal extends Modal {
+	private resolved = false;
+	private resolve!: (result: PermissionRequestResult) => void;
+	private readonly request: PermissionRequest;
+	readonly promise: Promise<PermissionRequestResult>;
+
+	constructor(app: App, request: PermissionRequest) {
+		super(app);
+		this.request = request;
+		this.promise = new Promise<PermissionRequestResult>((res) => {
+			this.resolve = res;
+		});
+	}
+
+	onOpen(): void {
+		const {contentEl} = this;
+		contentEl.empty();
+		contentEl.addClass('sidekick-approval-modal');
+
+		contentEl.createEl('h3', {text: 'Tool approval required'});
+
+		const info = contentEl.createDiv({cls: 'sidekick-approval-info'});
+		info.createDiv({cls: 'sidekick-approval-row', text: `Kind: ${this.request.kind}`});
+
+		// Show relevant details based on request kind
+		const details: Record<string, unknown> = {...this.request};
+		delete details.kind;
+		delete details.toolCallId;
+		if (Object.keys(details).length > 0) {
+			const pre = info.createEl('pre', {cls: 'sidekick-approval-details'});
+			pre.createEl('code', {text: JSON.stringify(details, null, 2)});
+		}
+
+		const btnRow = contentEl.createDiv({cls: 'sidekick-approval-buttons'});
+
+		const allowBtn = btnRow.createEl('button', {cls: 'mod-cta', text: 'Allow'});
+		allowBtn.addEventListener('click', () => {
+			this.resolved = true;
+			this.resolve({kind: 'approved'});
+			this.close();
+		});
+
+		const denyBtn = btnRow.createEl('button', {text: 'Deny'});
+		denyBtn.addEventListener('click', () => {
+			this.resolved = true;
+			this.resolve({kind: 'denied-interactively-by-user'});
+			this.close();
+		});
+	}
+
+	onClose(): void {
+		if (!this.resolved) {
+			this.resolve({kind: 'denied-interactively-by-user'});
+		}
+	}
+}
+
 // ── Sidekick view ───────────────────────────────────────────────
 
 export class SidekickView extends ItemView {
@@ -108,6 +170,7 @@ export class SidekickView extends ItemView {
 	private configDirty = true;
 	private streamingContent = '';
 	private renderScheduled = false;
+	private showDebugInfo = false;
 
 	// ── Turn-level metadata ────────────────────────────────────
 	private turnStartTime = 0;
@@ -129,6 +192,7 @@ export class SidekickView extends ItemView {
 	private skillsBtnEl!: HTMLButtonElement;
 	private toolsBtnEl!: HTMLButtonElement;
 	private cwdBtnEl!: HTMLButtonElement;
+	private debugBtnEl!: HTMLElement;
 	private streamingComponent: Component | null = null;
 	private streamingWrapperEl: HTMLElement | null = null;
 
@@ -172,7 +236,7 @@ export class SidekickView extends ItemView {
 		root.addClass('sidekick-root');
 
 		// Chat history (scrollable)
-		this.chatContainer = root.createDiv({cls: 'sidekick-chat'});
+		this.chatContainer = root.createDiv({cls: 'sidekick-chat sidekick-hide-debug'});
 		this.renderWelcome();
 
 		// Bottom panel
@@ -202,15 +266,15 @@ export class SidekickView extends ItemView {
 		// Attach buttons row above textarea
 		const inputActions = inputArea.createDiv({cls: 'sidekick-input-actions'});
 
-		const scopeBtn = inputActions.createEl('button', {cls: 'clickable-icon sidekick-icon-btn', attr: {'aria-label': 'Select vault scope'}});
+		const scopeBtn = inputActions.createEl('button', {cls: 'clickable-icon sidekick-icon-btn', attr: {title: 'Select vault scope'}});
 		setIcon(scopeBtn, 'folder');
 		scopeBtn.addEventListener('click', () => this.openScopeModal());
 
-		const attachBtn = inputActions.createEl('button', {cls: 'clickable-icon sidekick-icon-btn', attr: {'aria-label': 'Attach file'}});
+		const attachBtn = inputActions.createEl('button', {cls: 'clickable-icon sidekick-icon-btn', attr: {title: 'Attach file'}});
 		setIcon(attachBtn, 'paperclip');
 		attachBtn.addEventListener('click', () => this.handleAttachFile());
 
-		const clipBtn = inputActions.createEl('button', {cls: 'clickable-icon sidekick-icon-btn', attr: {'aria-label': 'Paste clipboard'}});
+		const clipBtn = inputActions.createEl('button', {cls: 'clickable-icon sidekick-icon-btn', attr: {title: 'Paste clipboard'}});
 		setIcon(clipBtn, 'clipboard-paste');
 		clipBtn.addEventListener('click', () => void this.handleClipboard());
 
@@ -223,7 +287,7 @@ export class SidekickView extends ItemView {
 
 		this.inputEl = inputRow.createEl('textarea', {
 			cls: 'sidekick-input',
-			attr: {placeholder: 'Describe what to build next…', rows: '1'},
+			attr: {placeholder: 'Ask or paste something to work on……', rows: '1'},
 		});
 
 		// Auto-resize
@@ -264,7 +328,7 @@ export class SidekickView extends ItemView {
 		// Send / Stop button
 		this.sendBtn = inputRow.createEl('button', {
 			cls: 'clickable-icon sidekick-send-btn',
-			attr: {'aria-label': 'Send message'},
+			attr: {title: 'Send message'},
 		});
 		setIcon(this.sendBtn, 'arrow-up');
 		this.sendBtn.addEventListener('click', () => {
@@ -280,12 +344,12 @@ export class SidekickView extends ItemView {
 		const toolbar = parent.createDiv({cls: 'sidekick-toolbar'});
 
 		// New conversation button
-		const newChatBtn = toolbar.createEl('button', {cls: 'clickable-icon sidekick-icon-btn', attr: {'aria-label': 'New conversation'}});
+		const newChatBtn = toolbar.createEl('button', {cls: 'clickable-icon sidekick-icon-btn', attr: {title: 'New conversation'}});
 		setIcon(newChatBtn, 'plus');
 		newChatBtn.addEventListener('click', () => void this.newConversation());
 
 		// Refresh button
-		const refreshBtn = toolbar.createEl('button', {cls: 'clickable-icon sidekick-icon-btn', attr: {'aria-label': 'Refresh configuration'}});
+		const refreshBtn = toolbar.createEl('button', {cls: 'clickable-icon sidekick-icon-btn', attr: {title: 'Refresh configuration'}});
 		setIcon(refreshBtn, 'refresh-cw');
 		refreshBtn.addEventListener('click', () => void this.loadAllConfigs());
 
@@ -329,20 +393,40 @@ export class SidekickView extends ItemView {
 		});
 
 		// Skills button
-		this.skillsBtnEl = toolbar.createEl('button', {cls: 'clickable-icon sidekick-icon-btn', attr: {'aria-label': 'Skills'}});
+		this.skillsBtnEl = toolbar.createEl('button', {cls: 'clickable-icon sidekick-icon-btn', attr: {title: 'Skills'}});
 		setIcon(this.skillsBtnEl, 'wand-2');
 		this.skillsBtnEl.addEventListener('click', (e) => this.openSkillsMenu(e));
 
 		// Tools button
-		this.toolsBtnEl = toolbar.createEl('button', {cls: 'clickable-icon sidekick-icon-btn', attr: {'aria-label': 'Tools'}});
+		this.toolsBtnEl = toolbar.createEl('button', {cls: 'clickable-icon sidekick-icon-btn', attr: {title: 'Tools'}});
 		setIcon(this.toolsBtnEl, 'plug');
 		this.toolsBtnEl.addEventListener('click', (e) => this.openToolsMenu(e));
 
 		// Working directory button
-		this.cwdBtnEl = toolbar.createEl('button', {cls: 'clickable-icon sidekick-icon-btn', attr: {'aria-label': 'Working directory'}});
+		this.cwdBtnEl = toolbar.createEl('button', {cls: 'clickable-icon sidekick-icon-btn', attr: {title: 'Working directory'}});
 		setIcon(this.cwdBtnEl, 'folder-open');
 		this.cwdBtnEl.addEventListener('click', () => this.openCwdPicker());
 		this.updateCwdButton();
+
+		// Spacer to push debug toggle to the right
+		toolbar.createDiv({cls: 'sidekick-toolbar-spacer'});
+
+		// Debug toggle
+		this.debugBtnEl = toolbar.createDiv({cls: 'sidekick-debug-toggle', attr: {title: 'Show tool & token details'}});
+		const debugIcon = this.debugBtnEl.createSpan({cls: 'sidekick-debug-icon clickable-icon'});
+		setIcon(debugIcon, 'bug');
+		const debugCheck = this.debugBtnEl.createEl('input', {type: 'checkbox', cls: 'sidekick-debug-checkbox'}) as HTMLInputElement;
+		debugCheck.checked = this.showDebugInfo;
+		debugCheck.addEventListener('change', () => {
+			this.showDebugInfo = debugCheck.checked;
+			this.chatContainer.toggleClass('sidekick-hide-debug', !this.showDebugInfo);
+		});
+		this.debugBtnEl.addEventListener('click', (e) => {
+			if (e.target !== debugCheck) {
+				debugCheck.checked = !debugCheck.checked;
+				debugCheck.dispatchEvent(new Event('change'));
+			}
+		});
 	}
 
 	// ── Config loading ───────────────────────────────────────────
@@ -475,13 +559,13 @@ export class SidekickView extends ItemView {
 	private updateSkillsBadge(): void {
 		const count = this.enabledSkills.size;
 		this.skillsBtnEl.toggleClass('is-active', count > 0);
-		this.skillsBtnEl.setAttribute('aria-label', count > 0 ? `Skills (${count} active)` : 'Skills');
+		this.skillsBtnEl.setAttribute('title', count > 0 ? `Skills (${count} active)` : 'Skills');
 	}
 
 	private updateToolsBadge(): void {
 		const count = this.enabledMcpServers.size;
 		this.toolsBtnEl.toggleClass('is-active', count > 0);
-		this.toolsBtnEl.setAttribute('aria-label', count > 0 ? `Tools (${count} active)` : 'Tools');
+		this.toolsBtnEl.setAttribute('title', count > 0 ? `Tools (${count} active)` : 'Tools');
 	}
 
 	// ── Attachments & scope ──────────────────────────────────────
@@ -529,7 +613,6 @@ export class SidekickView extends ItemView {
 		label.appendText(scopeText);
 		label.style.cursor = 'pointer';
 		const tooltipItems = this.scopePaths.map(p => p === '/' ? this.app.vault.getName() : p).join('\n');
-		label.setAttribute('aria-label', tooltipItems);
 		label.setAttribute('title', tooltipItems);
 		label.addEventListener('click', (e) => {
 			const menu = new Menu();
@@ -675,8 +758,11 @@ export class SidekickView extends ItemView {
 
 		const body = bodyWrapper.createDiv({cls: 'sidekick-msg-body'});
 		const thinking = body.createDiv({cls: 'sidekick-thinking'});
-		thinking.createSpan({text: 'Processing'});
-		thinking.createSpan({cls: 'sidekick-thinking-dots', text: '...'});
+		thinking.createSpan({text: 'Thinking'});
+		const dots = thinking.createSpan({cls: 'sidekick-thinking-dots'});
+		dots.createSpan({cls: 'sidekick-dot', text: '.'});
+		dots.createSpan({cls: 'sidekick-dot', text: '.'});
+		dots.createSpan({cls: 'sidekick-dot', text: '.'});
 
 		// Clean up any previous streaming component
 		if (this.streamingComponent) {
@@ -785,7 +871,6 @@ export class SidekickView extends ItemView {
 			setIcon(tokenIcon, 'hash');
 			tokenSpan.appendText(`${rounded} tokens`);
 			tokenSpan.setAttribute('title', tooltipLines.join('\n'));
-			tokenSpan.setAttribute('aria-label', tooltipLines.join('\n'));
 		}
 
 		// Tools used
@@ -796,7 +881,6 @@ export class SidekickView extends ItemView {
 			const toolLabel = uniqueTools.length === 1 ? '1 tool' : `${uniqueTools.length} tools`;
 			toolSpan.appendText(toolLabel);
 			toolSpan.setAttribute('title', uniqueTools.join('\n'));
-			toolSpan.setAttribute('aria-label', uniqueTools.join('\n'));
 		}
 
 		// Skills used
@@ -807,7 +891,6 @@ export class SidekickView extends ItemView {
 			const skillLabel = uniqueSkills.length === 1 ? '1 skill' : `${uniqueSkills.length} skills`;
 			skillSpan.appendText(skillLabel);
 			skillSpan.setAttribute('title', uniqueSkills.join('\n'));
-			skillSpan.setAttribute('aria-label', uniqueSkills.join('\n'));
 		}
 	}
 
@@ -868,11 +951,11 @@ export class SidekickView extends ItemView {
 		this.sendBtn.empty();
 		if (this.isStreaming) {
 			setIcon(this.sendBtn, 'square');
-			this.sendBtn.ariaLabel = 'Stop';
+			this.sendBtn.title = 'Stop';
 			this.sendBtn.addClass('is-streaming');
 		} else {
 			setIcon(this.sendBtn, 'arrow-up');
-			this.sendBtn.ariaLabel = 'Send message';
+			this.sendBtn.title = 'Send message';
 			this.sendBtn.removeClass('is-streaming');
 		}
 	}
@@ -1004,10 +1087,19 @@ export class SidekickView extends ItemView {
 			.filter(s => !this.enabledSkills.has(s.name))
 			.map(s => s.name);
 
+		const permissionHandler = (request: PermissionRequest) => {
+			if (this.plugin.settings.toolApproval === 'allow') {
+				return approveAll(request, {sessionId: ''});
+			}
+			const modal = new ToolApprovalModal(this.app, request);
+			modal.open();
+			return modal.promise;
+		};
+
 		const sessionConfig: SessionConfig = {
 			model,
 			streaming: true,
-			onPermissionRequest: approveAll,
+			onPermissionRequest: permissionHandler,
 			workingDirectory: this.getWorkingDirectory(),
 			...(Object.keys(mcpServers).length > 0 ? {mcpServers} : {}),
 			...(skillDirs.length > 0 ? {skillDirectories: skillDirs} : {}),
@@ -1182,7 +1274,7 @@ export class SidekickView extends ItemView {
 		const vaultName = this.app.vault.getName();
 		const display = this.workingDir || '/';
 		const label = `Working directory: ${vaultName}/${this.workingDir}`;
-		this.cwdBtnEl.setAttribute('aria-label', label);
+		this.cwdBtnEl.setAttribute('title', label);
 		this.cwdBtnEl.toggleClass('is-active', true);
 	}
 

@@ -9,13 +9,15 @@ export interface SidekickSettings {
 	agentsFolder: string;
 	skillsFolder: string;
 	toolsFolder: string;
+	toolApproval: 'ask' | 'allow';
 }
 
 export const DEFAULT_SETTINGS: SidekickSettings = {
 	copilotLocation: DEFAULT_COPILOT_LOCATION,
 	agentsFolder: 'sidekick/agents',
 	skillsFolder: 'sidekick/skills',
-	toolsFolder: 'sidekick/tools'
+	toolsFolder: 'sidekick/tools',
+	toolApproval: 'allow',
 }
 
 const SAMPLE_SKILL_CONTENT = `---
@@ -201,6 +203,17 @@ export class SidekickSettingTab extends PluginSettingTab {
 					} catch (e) {
 						new Notice(`Failed to initialize tools folder: ${String(e)}`);
 					}
+				}));
+
+		new Setting(containerEl)
+			.setName('Tools approval')
+			.setDesc('Whether tool invocations require manual approval or are allowed automatically.')
+			.addDropdown(dropdown => dropdown
+				.addOptions({allow: 'Allow (auto-approve)', ask: 'Ask (require approval)'})
+				.setValue(this.plugin.settings.toolApproval)
+				.onChange(async (value) => {
+					this.plugin.settings.toolApproval = value as 'ask' | 'allow';
+					await this.plugin.saveSettings();
 				}));
 
 		// --- Models section ---

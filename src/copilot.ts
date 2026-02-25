@@ -17,6 +17,9 @@ import type {
 	SessionEvent,
 	SessionEventType,
 	MessageOptions,
+	PermissionRequest,
+	PermissionRequestResult,
+	PermissionHandler,
 } from '@github/copilot-sdk';
 
 // Available at runtime in the esbuild CJS bundle.
@@ -249,4 +252,7 @@ export type {
 	SessionEvent,
 	SessionEventType,
 	MessageOptions,
+	PermissionRequest,
+	PermissionRequestResult,
+	PermissionHandler,
 };
