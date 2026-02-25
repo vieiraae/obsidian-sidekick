@@ -9,7 +9,6 @@ import {
 	setIcon,
 	TFile,
 	TFolder,
-	FuzzySuggestModal,
 	Component,
 	Menu,
 } from 'obsidian';
@@ -30,59 +29,150 @@ import {VaultScopeModal} from './vaultScopeModal';
 
 export const SIDEKICK_VIEW_TYPE = 'sidekick-view';
 
-// ── File-attach modal ───────────────────────────────────────────
+// FileAttachModal removed — attach now uses OS native file dialog
 
-class FileAttachModal extends FuzzySuggestModal<TFile> {
-	private readonly onSelect: (file: TFile) => void;
+// ── Folder tree picker modal ────────────────────────────────────
 
-	constructor(app: App, onSelect: (file: TFile) => void) {
-		super(app);
-		this.onSelect = onSelect;
-		this.setPlaceholder('Search vault files…');
-	}
-
-	getItems(): TFile[] {
-		return this.app.vault.getFiles();
-	}
-
-	getItemText(item: TFile): string {
-		return item.path;
-	}
-
-	onChooseItem(item: TFile): void {
-		this.onSelect(item);
-	}
-}
-
-// ── Folder-picker modal ─────────────────────────────────────────
-
-class FolderPickerModal extends FuzzySuggestModal<TFolder> {
+class FolderTreeModal extends Modal {
 	private readonly onSelect: (folder: TFolder) => void;
+	private readonly currentPath: string;
+	private collapsed: Set<string>;
+	private searchInput!: HTMLInputElement;
+	private listContainer!: HTMLElement;
 
-	constructor(app: App, onSelect: (folder: TFolder) => void) {
+	constructor(app: App, currentPath: string, onSelect: (folder: TFolder) => void) {
 		super(app);
 		this.onSelect = onSelect;
-		this.setPlaceholder('Select working directory…');
-	}
-
-	getItems(): TFolder[] {
-		const folders: TFolder[] = [];
-		const collect = (folder: TFolder) => {
-			folders.push(folder);
-			for (const child of folder.children) {
-				if (child instanceof TFolder) collect(child);
+		this.currentPath = currentPath;
+		this.collapsed = new Set<string>();
+		this.collapseAllBelow(this.app.vault.getRoot(), 1);
+		// Ensure current path is visible
+		if (currentPath) {
+			const parts = currentPath.split('/');
+			for (let i = 1; i <= parts.length; i++) {
+				this.collapsed.delete(parts.slice(0, i).join('/'));
 			}
-		};
-		collect(this.app.vault.getRoot());
-		return folders;
+		}
+		this.collapsed.delete('/');
 	}
 
-	getItemText(item: TFolder): string {
-		return item.path || '/';
+	onOpen(): void {
+		const {contentEl} = this;
+		contentEl.addClass('sidekick-scope-modal');
+
+		contentEl.createEl('h3', {text: 'Select working directory'});
+
+		this.searchInput = contentEl.createEl('input', {
+			type: 'text',
+			placeholder: 'Filter folders…',
+			cls: 'sidekick-scope-search',
+		});
+		this.searchInput.addEventListener('input', () => this.renderTree());
+
+		this.listContainer = contentEl.createDiv({cls: 'sidekick-scope-tree'});
+
+		this.renderTree();
 	}
 
-	onChooseItem(item: TFolder): void {
-		this.onSelect(item);
+	onClose(): void {
+		this.contentEl.empty();
+	}
+
+	private renderTree(): void {
+		this.listContainer.empty();
+		const filter = this.searchInput.value.toLowerCase();
+		const root = this.app.vault.getRoot();
+
+		// Root node
+		const rootRow = this.listContainer.createDiv({cls: 'sidekick-scope-item'});
+		rootRow.style.paddingLeft = '8px';
+		if (this.currentPath === '') rootRow.addClass('is-active');
+
+		const toggle = rootRow.createSpan({cls: 'sidekick-scope-toggle'});
+		setIcon(toggle, this.collapsed.has('/') ? 'chevron-right' : 'chevron-down');
+		toggle.addEventListener('click', (e) => {
+			e.stopPropagation();
+			if (this.collapsed.has('/')) this.collapsed.delete('/');
+			else this.collapsed.add('/');
+			this.renderTree();
+		});
+
+		const iconSpan = rootRow.createSpan({cls: 'sidekick-scope-icon'});
+		setIcon(iconSpan, 'vault');
+
+		rootRow.createSpan({text: this.app.vault.getName(), cls: 'sidekick-scope-name sidekick-scope-root-name'});
+
+		rootRow.addEventListener('click', () => {
+			this.onSelect(root);
+			this.close();
+		});
+
+		if (!this.collapsed.has('/')) {
+			this.renderFolder(root, this.listContainer, 1, filter);
+		}
+	}
+
+	private renderFolder(folder: TFolder, parent: HTMLElement, depth: number, filter: string): void {
+		const children = [...folder.children]
+			.filter((c): c is TFolder => c instanceof TFolder && !c.name.startsWith('.'))
+			.sort((a, b) => a.name.localeCompare(b.name));
+
+		for (const child of children) {
+			const matchesFilter = !filter || child.path.toLowerCase().includes(filter);
+			const hasMatch = this.hasMatchingDescendants(child, filter);
+			if (!matchesFilter && !hasMatch) continue;
+
+			const row = parent.createDiv({cls: 'sidekick-scope-item'});
+			row.style.paddingLeft = `${depth * 20 + 8}px`;
+			if (child.path === this.currentPath) row.addClass('is-active');
+
+			const hasSubfolders = child.children.some(c => c instanceof TFolder && !c.name.startsWith('.'));
+			if (hasSubfolders) {
+				const toggle = row.createSpan({cls: 'sidekick-scope-toggle'});
+				setIcon(toggle, this.collapsed.has(child.path) ? 'chevron-right' : 'chevron-down');
+				toggle.addEventListener('click', (e) => {
+					e.stopPropagation();
+					if (this.collapsed.has(child.path)) this.collapsed.delete(child.path);
+					else this.collapsed.add(child.path);
+					this.renderTree();
+				});
+			} else {
+				row.createSpan({cls: 'sidekick-scope-toggle sidekick-scope-toggle-spacer'});
+			}
+
+			const iconEl = row.createSpan({cls: 'sidekick-scope-icon'});
+			setIcon(iconEl, 'folder');
+
+			row.createSpan({text: child.name, cls: 'sidekick-scope-name'});
+
+			row.addEventListener('click', () => {
+				this.onSelect(child);
+				this.close();
+			});
+
+			if (hasSubfolders && !this.collapsed.has(child.path)) {
+				this.renderFolder(child, parent, depth + 1, filter);
+			}
+		}
+	}
+
+	private hasMatchingDescendants(folder: TFolder, filter: string): boolean {
+		if (!filter) return true;
+		for (const child of folder.children) {
+			if (!(child instanceof TFolder) || child.name.startsWith('.')) continue;
+			if (child.path.toLowerCase().includes(filter)) return true;
+			if (this.hasMatchingDescendants(child, filter)) return true;
+		}
+		return false;
+	}
+
+	private collapseAllBelow(folder: TFolder, maxDepth: number, current = 0): void {
+		for (const child of folder.children) {
+			if (child instanceof TFolder) {
+				if (current >= maxDepth) this.collapsed.add(child.path);
+				this.collapseAllBelow(child, maxDepth, current + 1);
+			}
+		}
 	}
 }
 
@@ -404,7 +494,7 @@ export class SidekickView extends ItemView {
 
 		// Working directory button
 		this.cwdBtnEl = toolbar.createEl('button', {cls: 'clickable-icon sidekick-icon-btn', attr: {title: 'Working directory'}});
-		setIcon(this.cwdBtnEl, 'folder-open');
+		setIcon(this.cwdBtnEl, 'hard-drive-download');
 		this.cwdBtnEl.addEventListener('click', () => this.openCwdPicker());
 		this.updateCwdButton();
 
@@ -632,10 +722,46 @@ export class SidekickView extends ItemView {
 	}
 
 	private handleAttachFile(): void {
-		new FileAttachModal(this.app, (file: TFile) => {
-			this.attachments.push({type: 'file', name: file.name, path: file.path});
+		const input = document.createElement('input');
+		input.type = 'file';
+		input.multiple = true;
+		input.style.display = 'none';
+		document.body.appendChild(input);
+
+		input.addEventListener('change', () => {
+			if (!input.files) { input.remove(); return; }
+
+			// Resolve absolute OS path: prefer Electron webUtils, fallback to File.path
+			let getPath: (f: File) => string;
+			try {
+				// eslint-disable-next-line @typescript-eslint/no-var-requires
+				const {webUtils} = require('electron') as {webUtils?: {getPathForFile: (f: File) => string}};
+				if (webUtils?.getPathForFile) {
+					getPath = (f: File) => webUtils.getPathForFile(f);
+				} else {
+					getPath = (f: File) => (f as unknown as {path: string}).path || '';
+				}
+			} catch {
+				getPath = (f: File) => (f as unknown as {path: string}).path || '';
+			}
+
+			for (let i = 0; i < input.files.length; i++) {
+				const file = input.files[i];
+				if (!file) continue;
+				const filePath = getPath(file);
+				if (!filePath) {
+					console.warn('Sidekick: could not resolve OS path for', file.name);
+					continue;
+				}
+				console.log('Sidekick: attached OS file', file.name, filePath);
+				this.attachments.push({type: 'file', name: file.name, path: filePath, absolutePath: true});
+			}
 			this.renderAttachments();
-		}).open();
+			input.remove();
+		});
+
+		input.addEventListener('cancel', () => input.remove());
+		input.click();
 	}
 
 	private async handleClipboard(): Promise<void> {
@@ -684,13 +810,24 @@ export class SidekickView extends ItemView {
 
 	// ── Message rendering ────────────────────────────────────────
 
-	private addUserMessage(content: string, attachments: ChatAttachment[]): void {
+	private addUserMessage(content: string, attachments: ChatAttachment[], scopePaths: string[]): void {
+		// Combine file/clipboard attachments with scope path entries for display
+		const allAttachments = [...attachments];
+		for (const sp of scopePaths) {
+			const displayName = sp === '/' ? this.app.vault.getName() : sp;
+			const abstract = sp === '/'
+				? this.app.vault.getRoot()
+				: this.app.vault.getAbstractFileByPath(sp);
+			const type = abstract instanceof TFolder ? 'directory' as const : 'file' as const;
+			allAttachments.push({type, name: displayName, path: sp});
+		}
+
 		const msg: ChatMessage = {
 			id: `u-${Date.now()}`,
 			role: 'user',
 			content,
 			timestamp: Date.now(),
-			attachments: attachments.length > 0 ? attachments : undefined,
+			attachments: allAttachments.length > 0 ? allAttachments : undefined,
 		};
 		this.messages.push(msg);
 		this.renderMessageBubble(msg);
@@ -721,10 +858,71 @@ export class SidekickView extends ItemView {
 		if (msg.attachments && msg.attachments.length > 0) {
 			const attRow = bodyWrapper.createDiv({cls: 'sidekick-msg-attachments'});
 			for (const att of msg.attachments) {
-				const chip = attRow.createSpan({cls: 'sidekick-msg-att-chip'});
+				const chip = attRow.createSpan({cls: 'sidekick-msg-att-chip sidekick-att-clickable'});
 				const ic = chip.createSpan();
-				setIcon(ic, att.type === 'image' ? 'image' : att.type === 'clipboard' ? 'clipboard' : 'file-text');
+				const icon = att.type === 'directory' ? 'folder' : att.type === 'image' ? 'image' : att.type === 'clipboard' ? 'clipboard' : 'file-text';
+				setIcon(ic, icon);
 				chip.appendText(` ${att.name}`);
+
+				// Click to open
+				if (att.type === 'clipboard') {
+					// Clipboard: copy content back to clipboard
+					if (att.content) {
+						chip.setAttribute('title', 'Copy to clipboard');
+						chip.addEventListener('click', () => {
+							void navigator.clipboard.writeText(att.content!);
+							new Notice('Copied to clipboard.');
+						});
+					}
+				} else if (att.absolutePath && att.path) {
+					// External OS file: open with default OS application
+					chip.setAttribute('title', 'Open with OS default application');
+					chip.addEventListener('click', () => {
+						try {
+							const {shell} = require('electron') as {shell: {openPath: (p: string) => Promise<string>}};
+							void shell.openPath(att.path!);
+						} catch (e) {
+							new Notice(`Failed to open file: ${String(e)}`);
+						}
+					});
+				} else if (att.type === 'image' && att.path) {
+					// Pasted image in vault: open with OS image viewer
+					chip.setAttribute('title', 'Open with OS image viewer');
+					chip.addEventListener('click', () => {
+						try {
+							const {shell} = require('electron') as {shell: {openPath: (p: string) => Promise<string>}};
+							const absPath = this.getVaultBasePath() + '/' + normalizePath(att.path!);
+							void shell.openPath(absPath);
+						} catch (e) {
+							new Notice(`Failed to open image: ${String(e)}`);
+						}
+					});
+				} else if (att.type === 'directory' && att.path) {
+					// Vault folder: reveal in file explorer
+					chip.setAttribute('title', 'Reveal in file explorer');
+					chip.addEventListener('click', () => {
+						const folder = att.path === '/'
+							? this.app.vault.getRoot()
+							: this.app.vault.getAbstractFileByPath(att.path!);
+						if (folder) {
+							// Reveal the folder in Obsidian's file explorer
+							const fileExplorer = this.app.workspace.getLeavesOfType('file-explorer')[0];
+							if (fileExplorer) {
+								this.app.workspace.revealLeaf(fileExplorer);
+								(fileExplorer.view as unknown as {revealInFolder?: (f: unknown) => void}).revealInFolder?.(folder);
+							}
+						}
+					});
+				} else if (att.type === 'file' && att.path) {
+					// Vault file: open in Obsidian
+					chip.setAttribute('title', 'Open in Obsidian');
+					chip.addEventListener('click', () => {
+						const file = this.app.vault.getAbstractFileByPath(att.path!);
+						if (file instanceof TFile) {
+							void this.app.workspace.getLeaf(false).openFile(file);
+						}
+					});
+				}
 			}
 		}
 
@@ -971,11 +1169,12 @@ export class SidekickView extends ItemView {
 			return;
 		}
 
-		// Snapshot attachments
+		// Snapshot attachments and scope
 		const currentAttachments = [...this.attachments];
+		const currentScopePaths = [...this.scopePaths];
 
 		// Update UI
-		this.addUserMessage(prompt, currentAttachments);
+		this.addUserMessage(prompt, currentAttachments, currentScopePaths);
 		this.inputEl.value = '';
 		this.inputEl.style.height = 'auto';
 		this.attachments = [];
@@ -992,6 +1191,12 @@ export class SidekickView extends ItemView {
 
 			const sdkAttachments = this.buildSdkAttachments(currentAttachments);
 			const fullPrompt = this.buildPrompt(prompt, currentAttachments);
+
+			console.log('Sidekick: sending message', {
+				prompt: fullPrompt.slice(0, 100),
+				attachments: sdkAttachments,
+				scopePaths: this.scopePaths,
+			});
 
 			await this.currentSession!.send({
 				prompt: fullPrompt,
@@ -1226,28 +1431,47 @@ export class SidekickView extends ItemView {
 
 		for (const att of attachments) {
 			if ((att.type === 'file' || att.type === 'image') && att.path) {
+				const filePath = att.absolutePath ? att.path : basePath + '/' + normalizePath(att.path);
 				result.push({
 					type: 'file',
-					path: basePath + '/' + normalizePath(att.path),
+					path: filePath,
 					displayName: att.name,
 				});
 			} else if (att.type === 'directory' && att.path) {
+				const dirPath = att.absolutePath ? att.path : basePath + '/' + normalizePath(att.path);
 				result.push({
 					type: 'directory',
-					path: basePath + '/' + normalizePath(att.path),
+					path: dirPath,
 					displayName: att.name,
 				});
 			}
 		}
 
-		// Add vault scope paths
-		for (const scopePath of this.scopePaths) {
-			const absPath = basePath + '/' + normalizePath(scopePath);
-			const abstract = this.app.vault.getAbstractFileByPath(scopePath);
+		// Add vault scope paths (skip children if a parent folder is selected)
+		const scopeSorted = [...this.scopePaths].sort((a, b) => a.length - b.length);
+		const includedFolders: string[] = [];
+
+		for (const scopePath of scopeSorted) {
+			// Skip if an ancestor folder is already included
+			const normalized = normalizePath(scopePath);
+			const isChild = includedFolders.some(parent =>
+				parent === '/' || normalized.startsWith(parent + '/')
+			);
+			if (isChild) continue;
+
+			const absPath = scopePath === '/'
+				? basePath
+				: basePath + '/' + normalized;
+			const displayName = scopePath === '/' ? this.app.vault.getName() : scopePath;
+			const abstract = scopePath === '/'
+				? this.app.vault.getRoot()
+				: this.app.vault.getAbstractFileByPath(scopePath);
+
 			if (abstract instanceof TFolder) {
-				result.push({type: 'directory', path: absPath, displayName: scopePath});
+				result.push({type: 'directory', path: absPath, displayName});
+				includedFolders.push(normalized);
 			} else if (abstract instanceof TFile) {
-				result.push({type: 'file', path: absPath, displayName: scopePath});
+				result.push({type: 'file', path: absPath, displayName});
 			}
 		}
 
@@ -1263,7 +1487,7 @@ export class SidekickView extends ItemView {
 	}
 
 	private openCwdPicker(): void {
-		new FolderPickerModal(this.app, (folder) => {
+		new FolderTreeModal(this.app, this.workingDir, (folder) => {
 			this.workingDir = folder.path;
 			this.updateCwdButton();
 			this.configDirty = true;

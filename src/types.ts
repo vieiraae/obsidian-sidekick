@@ -35,8 +35,10 @@ export interface ChatMessage {
 export interface ChatAttachment {
 	type: 'file' | 'directory' | 'clipboard' | 'image';
 	name: string;
-	/** Vault-relative path (for files, directories, images). */
+	/** Vault-relative path (for files, directories, images) or absolute OS path when `absolutePath` is true. */
 	path?: string;
 	/** Raw text content (for clipboard). */
 	content?: string;
+	/** When true, `path` is an absolute OS path (not vault-relative). */
+	absolutePath?: boolean;
 }

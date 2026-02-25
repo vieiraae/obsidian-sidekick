@@ -184,6 +184,15 @@
 	padding: 1px 6px;
 }
 
+.sidekick-att-clickable {
+	cursor: pointer;
+}
+
+.sidekick-att-clickable:hover {
+	color: var(--text-normal);
+	background: var(--background-modifier-hover);
+}
+
 .sidekick-msg-att-chip svg {
 	width: 12px;
 	height: 12px;
@@ -821,6 +830,11 @@
 
 .sidekick-scope-item:hover {
 	background: var(--background-modifier-hover);
+}
+
+.sidekick-scope-item.is-active {
+	background: var(--background-modifier-active-hover);
+	color: var(--text-accent);
 }
 
 .sidekick-scope-toggle {
