@@ -114,11 +114,12 @@ export class SidekickView extends ItemView {
 	private turnToolsUsed: string[] = [];
 	private turnSkillsUsed: string[] = [];
 	private turnUsage: {inputTokens: number; outputTokens: number; cacheReadTokens: number; cacheWriteTokens: number; model?: string} | null = null;
+	private activeToolCalls = new Map<string, {toolName: string; detailsEl: HTMLDetailsElement}>();
 
 	// ── DOM refs ─────────────────────────────────────────────────
 	private chatContainer!: HTMLElement;
 	private streamingBodyEl: HTMLElement | null = null;
-	private toolStatusEl: HTMLElement | null = null;
+	private toolCallsContainer: HTMLElement | null = null;
 	private inputEl!: HTMLTextAreaElement;
 	private attachmentsBar!: HTMLElement;
 	private scopeBar!: HTMLElement;
@@ -669,8 +670,8 @@ export class SidekickView extends ItemView {
 
 		const bodyWrapper = wrapper.createDiv({cls: 'sidekick-msg-body-wrapper'});
 
-		// Tool status element
-		this.toolStatusEl = bodyWrapper.createDiv({cls: 'sidekick-tool-status is-hidden'});
+		// Container for collapsible tool call blocks
+		this.toolCallsContainer = bodyWrapper.createDiv({cls: 'sidekick-tool-calls'});
 
 		const body = bodyWrapper.createDiv({cls: 'sidekick-msg-body'});
 		const thinking = body.createDiv({cls: 'sidekick-thinking'});
@@ -726,7 +727,8 @@ export class SidekickView extends ItemView {
 		this.streamingContent = '';
 		this.streamingBodyEl = null;
 		this.streamingWrapperEl = null;
-		this.toolStatusEl = null;
+		this.toolCallsContainer = null;
+		this.activeToolCalls.clear();
 
 		if (this.streamingComponent) {
 			this.removeChild(this.streamingComponent);
@@ -809,18 +811,57 @@ export class SidekickView extends ItemView {
 		}
 	}
 
-	private showToolStatus(toolName: string): void {
-		if (!this.toolStatusEl) return;
-		this.toolStatusEl.removeClass('is-hidden');
-		this.toolStatusEl.empty();
-		const ic = this.toolStatusEl.createSpan({cls: 'sidekick-tool-icon'});
-		setIcon(ic, 'wrench');
-		this.toolStatusEl.createSpan({text: `Using ${toolName}…`});
+	private addToolCallBlock(toolCallId: string, toolName: string, args?: unknown): void {
+		if (!this.toolCallsContainer) return;
+
+		const details = this.toolCallsContainer.createEl('details', {cls: 'sidekick-tool-call'});
+		const summary = details.createEl('summary', {cls: 'sidekick-tool-call-summary'});
+		const iconEl = summary.createSpan({cls: 'sidekick-tool-call-icon'});
+		setIcon(iconEl, 'wrench');
+		summary.createSpan({cls: 'sidekick-tool-call-name', text: toolName});
+		const spinner = summary.createSpan({cls: 'sidekick-tool-call-spinner'});
+		setIcon(spinner, 'loader');
+
+		// Input section
+		if (args && Object.keys(args as Record<string, unknown>).length > 0) {
+			const inputSection = details.createDiv({cls: 'sidekick-tool-call-section'});
+			inputSection.createDiv({cls: 'sidekick-tool-call-label', text: 'Input'});
+			const pre = inputSection.createEl('pre', {cls: 'sidekick-tool-call-code'});
+			pre.createEl('code', {text: JSON.stringify(args, null, 2)});
+		}
+
+		this.activeToolCalls.set(toolCallId, {toolName, detailsEl: details});
+		this.scrollToBottom();
 	}
 
-	private hideToolStatus(): void {
-		if (!this.toolStatusEl) return;
-		this.toolStatusEl.addClass('is-hidden');
+	private completeToolCallBlock(toolCallId: string, success: boolean, result?: {content?: string; detailedContent?: string}, error?: {message: string}): void {
+		const entry = this.activeToolCalls.get(toolCallId);
+		if (!entry) return;
+
+		const {detailsEl} = entry;
+
+		// Remove spinner, add status icon
+		const spinner = detailsEl.querySelector('.sidekick-tool-call-spinner');
+		if (spinner) spinner.remove();
+		const summaryEl = detailsEl.querySelector('summary');
+		if (summaryEl) {
+			const statusEl = summaryEl.createSpan({cls: `sidekick-tool-call-status ${success ? 'is-success' : 'is-error'}`});
+			setIcon(statusEl, success ? 'check' : 'x');
+		}
+
+		// Output section
+		const output = error ? `Error: ${error.message}` : (result?.detailedContent || result?.content || '');
+		if (output) {
+			const outputSection = detailsEl.createDiv({cls: 'sidekick-tool-call-section'});
+			outputSection.createDiv({cls: 'sidekick-tool-call-label', text: success ? 'Output' : 'Error'});
+			const pre = outputSection.createEl('pre', {cls: 'sidekick-tool-call-code'});
+			const maxLen = 5000;
+			const displayText = output.length > maxLen ? output.slice(0, maxLen) + '\n… (truncated)' : output;
+			pre.createEl('code', {text: displayText});
+		}
+
+		this.activeToolCalls.delete(toolCallId);
+		this.scrollToBottom();
 	}
 
 	private updateSendButton(): void {
@@ -1023,12 +1064,17 @@ export class SidekickView extends ItemView {
 				this.addInfoMessage(`Error: ${event.data.message}`);
 			}),
 			session.on('tool.execution_start', (event) => {
-				console.log('Sidekick: tool.execution_start', event.data.toolName);
+				console.log('Sidekick: tool.execution_start', event.data.toolName, event.data);
 				this.turnToolsUsed.push(event.data.toolName);
-				this.showToolStatus(event.data.toolName);
+				this.addToolCallBlock(event.data.toolCallId, event.data.toolName, event.data.arguments);
 			}),
-			session.on('tool.execution_complete', () => {
-				this.hideToolStatus();
+			session.on('tool.execution_complete', (event) => {
+				this.completeToolCallBlock(
+					event.data.toolCallId,
+					event.data.success,
+					event.data.result as {content?: string; detailedContent?: string} | undefined,
+					event.data.error as {message: string} | undefined,
+				);
 			}),
 			session.on('skill.invoked', (event) => {
 				console.log('Sidekick: skill.invoked', event.data.name);

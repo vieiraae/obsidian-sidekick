@@ -189,30 +189,137 @@
 	height: 12px;
 }
 
-/* Tool status */
+/* Tool call collapsible blocks */
 
-.sidekick-tool-status {
+.sidekick-tool-calls {
 	display: flex;
-	align-items: center;
+	flex-direction: column;
 	gap: 4px;
-	font-size: var(--font-ui-smaller);
-	color: var(--text-accent);
-	padding: 2px 0 4px;
-	animation: sidekick-pulse 1.5s ease-in-out infinite;
 }
 
-.sidekick-tool-status.is-hidden {
+.sidekick-tool-calls:empty {
 	display: none;
 }
 
-.sidekick-tool-icon svg {
+.sidekick-tool-call {
+	border: 1px solid var(--background-modifier-border);
+	border-radius: var(--radius-s);
+	font-size: var(--font-ui-smaller);
+	overflow: hidden;
+}
+
+.sidekick-tool-call-summary {
+	display: flex;
+	align-items: center;
+	gap: 6px;
+	padding: 4px 8px;
+	cursor: pointer;
+	color: var(--text-muted);
+	user-select: none;
+	-webkit-user-select: none;
+	list-style: none;
+}
+
+.sidekick-tool-call-summary::-webkit-details-marker {
+	display: none;
+}
+
+.sidekick-tool-call-summary::before {
+	content: '';
+	display: inline-block;
+	width: 0;
+	height: 0;
+	border-left: 5px solid currentColor;
+	border-top: 4px solid transparent;
+	border-bottom: 4px solid transparent;
+	transition: transform 0.15s ease;
+	flex-shrink: 0;
+}
+
+.sidekick-tool-call[open] > .sidekick-tool-call-summary::before {
+	transform: rotate(90deg);
+}
+
+.sidekick-tool-call-summary:hover {
+	color: var(--text-normal);
+	background: var(--background-modifier-hover);
+}
+
+.sidekick-tool-call-icon svg {
+	width: 14px;
+	height: 14px;
+	flex-shrink: 0;
+}
+
+.sidekick-tool-call-name {
+	flex: 1;
+	min-width: 0;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
+.sidekick-tool-call-spinner {
+	flex-shrink: 0;
+	animation: sidekick-spin 1s linear infinite;
+}
+
+.sidekick-tool-call-spinner svg {
 	width: 14px;
 	height: 14px;
 }
 
-@keyframes sidekick-pulse {
-	0%, 100% { opacity: 1; }
-	50% { opacity: 0.5; }
+@keyframes sidekick-spin {
+	from { transform: rotate(0deg); }
+	to { transform: rotate(360deg); }
+}
+
+.sidekick-tool-call-status svg {
+	width: 14px;
+	height: 14px;
+	flex-shrink: 0;
+}
+
+.sidekick-tool-call-status.is-success {
+	color: var(--text-success);
+}
+
+.sidekick-tool-call-status.is-error {
+	color: var(--text-error);
+}
+
+.sidekick-tool-call-section {
+	padding: 4px 8px 6px;
+	border-top: 1px solid var(--background-modifier-border);
+}
+
+.sidekick-tool-call-label {
+	font-size: var(--font-ui-smaller);
+	font-weight: var(--font-semibold);
+	color: var(--text-muted);
+	margin-bottom: 4px;
+	text-transform: uppercase;
+	letter-spacing: 0.05em;
+}
+
+.sidekick-tool-call-code {
+	margin: 0;
+	padding: 6px 8px;
+	background: var(--code-background);
+	border-radius: var(--radius-s);
+	font-size: var(--font-ui-smaller);
+	line-height: 1.4;
+	overflow-x: auto;
+	max-height: 300px;
+	overflow-y: auto;
+	white-space: pre-wrap;
+	word-break: break-all;
+}
+
+.sidekick-tool-call-code code {
+	background: none;
+	padding: 0;
+	font-size: inherit;
 }
 
 /* ── Message metadata footer ──────────────────────────────────── */
