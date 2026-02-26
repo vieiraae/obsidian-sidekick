@@ -345,7 +345,7 @@ export class SidekickView extends ItemView {
 		setIcon(icon, 'brain');
 		welcome.createEl('h3', {text: 'Sidekick'});
 		welcome.createEl('p', {
-			text: 'Your AI-powered second brain. Select an agent, choose a model, and start chatting.',
+			text: 'Your AI-powered second brain. Select an agent, choose a model, configure tools and get the job done!',
 			cls: 'sidekick-welcome-desc',
 		});
 	}
@@ -377,7 +377,7 @@ export class SidekickView extends ItemView {
 
 		this.inputEl = inputRow.createEl('textarea', {
 			cls: 'sidekick-input',
-			attr: {placeholder: 'Ask or paste something to work on……', rows: '1'},
+			attr: {placeholder: 'Ask or paste something to work on...', rows: '1'},
 		});
 
 		// Auto-resize
@@ -974,10 +974,31 @@ export class SidekickView extends ItemView {
 		this.scrollToBottom();
 	}
 
+	private showProcessingIndicator(): void {
+		if (!this.streamingBodyEl) return;
+		// Remove any existing thinking/processing indicator
+		const existing = this.streamingBodyEl.querySelector('.sidekick-thinking');
+		if (existing) existing.remove();
+		const processing = this.streamingBodyEl.createDiv({cls: 'sidekick-thinking'});
+		processing.createSpan({text: 'Processing'});
+		const dots = processing.createSpan({cls: 'sidekick-thinking-dots'});
+		dots.createSpan({cls: 'sidekick-dot', text: '.'});
+		dots.createSpan({cls: 'sidekick-dot', text: '.'});
+		dots.createSpan({cls: 'sidekick-dot', text: '.'});
+	}
+
+	private removeProcessingIndicator(): void {
+		if (!this.streamingBodyEl) return;
+		const indicator = this.streamingBodyEl.querySelector('.sidekick-thinking');
+		if (indicator) indicator.remove();
+	}
+
 	// ── Streaming ────────────────────────────────────────────────
 
 	private appendDelta(delta: string): void {
 		this.streamingContent += delta;
+		// Remove processing indicator once real content starts streaming
+		this.removeProcessingIndicator();
 		if (!this.renderScheduled) {
 			this.renderScheduled = true;
 			window.requestAnimationFrame(() => {
@@ -1112,6 +1133,10 @@ export class SidekickView extends ItemView {
 		}
 
 		this.activeToolCalls.set(toolCallId, {toolName, detailsEl: details});
+
+		// Show "Processing ..." animation while tools are running
+		this.showProcessingIndicator();
+
 		this.scrollToBottom();
 	}
 

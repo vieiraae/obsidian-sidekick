@@ -2,6 +2,7 @@ import {Plugin} from 'obsidian';
 import {DEFAULT_SETTINGS, SidekickSettings, SidekickSettingTab} from "./settings";
 import {CopilotService} from "./copilot";
 import {SidekickView, SIDEKICK_VIEW_TYPE} from "./sidekickView";
+import {registerEditorMenu} from "./editorMenu";
 
 export default class SidekickPlugin extends Plugin {
 	settings: SidekickSettings;
@@ -23,6 +24,9 @@ export default class SidekickPlugin extends Plugin {
 			name: 'Open Sidekick',
 			callback: () => void this.activateView(),
 		});
+
+		// Editor context menu (Sidekick submenu for selected text)
+		registerEditorMenu(this);
 
 		try {
 			await this.initCopilot();
