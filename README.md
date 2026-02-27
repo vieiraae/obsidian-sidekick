@@ -10,9 +10,41 @@ Sidekick connects to GitHub Copilot to give you a fully configurable AI assistan
 
 ## Getting started
 
-### 1. Install the plugin
+### 1. Check the GitHub Copilot CLI
 
-Copy `main.js`, `styles.css`, and `manifest.json` to your vault:
+Sidekick requires the GitHub Copilot CLI. If you have [GitHub Copilot in VS Code](https://marketplace.visualstudio.com/items?itemName=GitHub.copilot), the CLI is already installed — you just need to find its path.
+
+**Verify it's working** by running in a terminal:
+
+```bash
+copilot --version
+```
+
+If the command is not found, locate the binary using the paths below.
+
+**Find the Copilot CLI path:**
+
+| OS | Typical path |
+|----|-------------|
+| **Windows** | `%LOCALAPPDATA%\Programs\copilot-cli\copilot.exe` or check inside your VS Code extensions folder: `%USERPROFILE%\.vscode\extensions\github.copilot-*\copilot\dist\` |
+| **Linux** | `~/.local/bin/copilot` or inside VS Code extensions: `~/.vscode/extensions/github.copilot-*/copilot/dist/` |
+| **macOS** | `~/.local/bin/copilot` or inside VS Code extensions: `~/.vscode/extensions/github.copilot-*/copilot/dist/` |
+
+**Log in** (if not already authenticated):
+
+```bash
+copilot auth login
+```
+
+Follow the browser-based authentication flow. Once logged in, confirm with:
+
+```bash
+copilot auth status
+```
+
+### 2. Install the plugin
+
+Download `main.js`, `styles.css`, and `manifest.json` from the [latest release](https://github.com/vieiraae/obsidian-sidekick/releases/latest) and place them in your vault:
 
 ```
 <YourVault>/.obsidian/plugins/sidekick/
@@ -20,11 +52,11 @@ Copy `main.js`, `styles.css`, and `manifest.json` to your vault:
 
 Reload Obsidian. Enable **Sidekick** in **Settings → Community plugins**.
 
-### 2. Configure the Copilot CLI
+### 3. Configure the Copilot CLI
 
-Open **Settings → Sidekick** and set the **Copilot location** to the path of your `copilot` binary (leave blank if it's on your `PATH`). Click **Ping** to verify the connection.
+Open **Settings → Sidekick** and set the **Copilot location** to the full path of your `copilot` binary found in step 1 (leave blank if it's on your `PATH`). Click **Ping** to verify the connection.
 
-### 3. Initialize the Sidekick folder
+### 4. Initialize the Sidekick folder
 
 In the same settings tab, set a **Sidekick folder** name (default: `sidekick`) and click **Initialize**. This creates the folder structure with sample files:
 
@@ -37,7 +69,7 @@ sidekick/
   triggers/      → Automated triggers (*.trigger.md)
 ```
 
-### 4. Open Sidekick
+### 5. Open Sidekick
 
 Click the **brain** icon in the ribbon, or run the **Open Sidekick** command from the command palette.
 
@@ -149,6 +181,10 @@ Tool servers are configured in `sidekick/tools/mcp.json`. Sidekick supports both
       "type": "http",
       "url": "https://api.githubcopilot.com/mcp/"
     },
+    "workiq": {
+      "command": "npx",
+      "args": ["-y", "@microsoft/workiq", "mcp"]
+    },
     "my-local-tool": {
       "command": "node",
       "args": ["./my-tool/index.js"],
@@ -157,6 +193,8 @@ Tool servers are configured in `sidekick/tools/mcp.json`. Sidekick supports both
   }
 }
 ```
+
+The `github` server connects to GitHub Copilot's built-in MCP endpoint. The `workiq` server runs [Microsoft Work IQ](https://github.com/microsoft/work-iq-mcp) via NPX — it lets you query your Microsoft 365 data (emails, meetings, documents, Teams messages) using natural language. Work IQ requires Node.js 18+ and admin consent on your Microsoft 365 tenant (see the [admin guide](https://github.com/microsoft/work-iq-mcp/blob/main/ADMIN-INSTRUCTIONS.md) for details).
 
 The format also accepts `"mcpServers"` as the top-level key. Toggle individual servers from the **plug** icon in the toolbar.
 
