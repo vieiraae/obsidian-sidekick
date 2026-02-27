@@ -2384,10 +2384,29 @@ export class SidekickView extends ItemView {
 				scopePaths: this.scopePaths,
 			});
 
-			await this.currentSession!.send({
-				prompt: fullPrompt,
-				...(sdkAttachments && sdkAttachments.length > 0 ? {attachments: sdkAttachments} : {}),
-			});
+			try {
+				await this.currentSession!.send({
+					prompt: fullPrompt,
+					...(sdkAttachments && sdkAttachments.length > 0 ? {attachments: sdkAttachments} : {}),
+				});
+			} catch (sendErr) {
+				// If the session is stale (e.g. SDK restarted), invalidate and retry once
+				if (String(sendErr).includes('Session not found')) {
+					console.warn('Sidekick: session stale, creating fresh session and retrying');
+					this.unsubscribeEvents();
+					this.currentSession = null;
+					this.currentSessionId = null;
+					this.configDirty = true;
+					await this.ensureSession();
+					this.registerSessionEvents();
+					await this.currentSession!.send({
+						prompt: fullPrompt,
+						...(sdkAttachments && sdkAttachments.length > 0 ? {attachments: sdkAttachments} : {}),
+					});
+				} else {
+					throw sendErr;
+				}
+			}
 		} catch (e) {
 			this.finalizeStreamingMessage();
 			this.addInfoMessage(`Error: ${String(e)}`);
