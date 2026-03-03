@@ -31,7 +31,7 @@ import {getAgentsFolder, getSkillsFolder, getToolsFolder, getPromptsFolder, getT
 import {TriggerScheduler} from './triggerScheduler';
 import type {TriggerFireContext} from './triggerScheduler';
 import {VaultScopeModal} from './vaultScopeModal';
-import {debugLog, debugTrace, setDebugEnabled} from './debug';
+import {debugTrace, setDebugEnabled} from './debug';
 
 export const SIDEKICK_VIEW_TYPE = 'sidekick-view';
 
@@ -990,8 +990,7 @@ export class SidekickView extends ItemView {
 			// Resolve absolute OS path: prefer Electron webUtils, fallback to File.path
 			let getPath: (f: File) => string;
 			try {
-				// eslint-disable-next-line @typescript-eslint/no-var-requires
-				const {webUtils} = require('electron') as {webUtils?: {getPathForFile: (f: File) => string}};
+				const {webUtils} = (globalThis.require as NodeRequire)('electron') as {webUtils?: {getPathForFile: (f: File) => string}};
 				if (webUtils?.getPathForFile) {
 					getPath = (f: File) => webUtils.getPathForFile(f);
 				} else {
@@ -1008,7 +1007,6 @@ export class SidekickView extends ItemView {
 				if (!filePath) {
 					continue;
 				}
-				debugLog('Sidekick: attached OS file', file.name, filePath);
 				this.attachments.push({type: 'file', name: file.name, path: filePath, absolutePath: true});
 			}
 			this.renderAttachments();
@@ -1967,8 +1965,6 @@ export class SidekickView extends ItemView {
 			},
 		});
 		this.triggerScheduler.setTriggers(this.triggers);
-		debugLog(`Sidekick: trigger scheduler initialized with ${this.triggers.length} trigger(s)`,
-			this.triggers.map(t => ({name: t.name, entries: t.triggers.map(e => ({type: e.type, cron: e.cron, glob: e.glob}))})));
 		const intervalId = this.triggerScheduler.start();
 		this.registerInterval(intervalId);
 
@@ -2080,7 +2076,6 @@ export class SidekickView extends ItemView {
 			this.renderSessionList();
 
 			// Send the trigger content
-			debugLog(`Sidekick: firing trigger "${trigger.name}"`, {prompt: prompt.slice(0, 200)});
 			await session.send({prompt});
 
 			new Notice(`Trigger fired: ${trigger.description || trigger.name}`);
@@ -2167,7 +2162,7 @@ export class SidekickView extends ItemView {
 								new Notice('Cannot open file: path contains directory traversal.');
 								return;
 							}
-							const {shell} = require('electron') as {shell: {openPath: (p: string) => Promise<string>}};
+							const {shell} = (globalThis.require as NodeRequire)('electron') as {shell: {openPath: (p: string) => Promise<string>}};
 							void shell.openPath(filePath);
 						} catch (e) {
 							new Notice(`Failed to open file: ${String(e)}`);
@@ -2184,7 +2179,7 @@ export class SidekickView extends ItemView {
 								new Notice('Cannot open image: path escapes the vault.');
 								return;
 							}
-							const {shell} = require('electron') as {shell: {openPath: (p: string) => Promise<string>}};
+							const {shell} = (globalThis.require as NodeRequire)('electron') as {shell: {openPath: (p: string) => Promise<string>}};
 							const absPath = this.getVaultBasePath() + '/' + vaultPath;
 							void shell.openPath(absPath);
 						} catch (e) {
@@ -2202,7 +2197,7 @@ export class SidekickView extends ItemView {
 							// Reveal the folder in Obsidian's file explorer
 							const fileExplorer = this.app.workspace.getLeavesOfType('file-explorer')[0];
 							if (fileExplorer) {
-								this.app.workspace.revealLeaf(fileExplorer);
+								void this.app.workspace.revealLeaf(fileExplorer);
 								(fileExplorer.view as unknown as {revealInFolder?: (f: unknown) => void}).revealInFolder?.(folder);
 							}
 						}
@@ -2631,12 +2626,6 @@ export class SidekickView extends ItemView {
 			const sdkAttachments = this.buildSdkAttachments(currentAttachments);
 			const fullPrompt = this.buildPrompt(sendPrompt, currentAttachments);
 
-			debugLog('Sidekick: sending message', {
-				prompt: fullPrompt.slice(0, 200),
-				attachments: sdkAttachments,
-				scopePaths: this.scopePaths,
-			});
-
 			try {
 				await this.currentSession!.send({
 					prompt: fullPrompt,
@@ -2763,7 +2752,6 @@ export class SidekickView extends ItemView {
 				this.addInfoMessage(`Error: ${event.data.message}`);
 			}),
 			session.on('tool.execution_start', (event) => {
-				debugLog('Sidekick: tool.execution_start', event.data.toolName, event.data);
 				this.turnToolsUsed.push(event.data.toolName);
 				this.addToolCallBlock(event.data.toolCallId, event.data.toolName, event.data.arguments);
 			}),
@@ -2776,7 +2764,6 @@ export class SidekickView extends ItemView {
 				);
 			}),
 			session.on('skill.invoked', (event) => {
-				debugLog('Sidekick: skill.invoked', event.data.name);
 				this.turnSkillsUsed.push(event.data.name);
 			}),
 		);
@@ -2967,10 +2954,6 @@ export class SidekickView extends ItemView {
 			}
 		}
 
-		if (Object.keys(mcpServers).length > 0) {
-			debugLog('Sidekick: configuring MCP servers:', Object.keys(mcpServers));
-		}
-
 		// Skills
 		const basePath = this.getVaultBasePath();
 		const skillDirs: string[] = [];
@@ -2980,10 +2963,6 @@ export class SidekickView extends ItemView {
 		const disabledSkills = this.skills
 			.filter(s => !this.enabledSkills.has(s.name))
 			.map(s => s.name);
-
-		if (skillDirs.length > 0) {
-			debugLog('Sidekick: skill directories:', skillDirs, 'disabled:', disabledSkills);
-		}
 
 		// Permission handler
 		const permissionHandler = (request: PermissionRequest) => {
@@ -3105,7 +3084,6 @@ export class SidekickView extends ItemView {
 
 	private updateCwdButton(): void {
 		const vaultName = this.app.vault.getName();
-		const display = this.workingDir || '/';
 		const label = `Working directory: ${vaultName}/${this.workingDir}`;
 		this.cwdBtnEl.setAttribute('title', label);
 		this.cwdBtnEl.toggleClass('is-active', true);

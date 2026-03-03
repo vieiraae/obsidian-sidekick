@@ -21,8 +21,8 @@ export default class SidekickPlugin extends Plugin {
 
 		// Command to open view
 		this.addCommand({
-			id: 'open-sidekick',
-			name: 'Open Sidekick',
+			id: 'open-chat',
+			name: 'Open chat',
 			callback: () => void this.activateView(),
 		});
 
@@ -72,19 +72,18 @@ export default class SidekickPlugin extends Plugin {
 		if (this.copilot) {
 			void this.copilot.stop();
 		}
-		this.app.workspace.detachLeavesOfType(SIDEKICK_VIEW_TYPE);
 	}
 
 	async activateView(): Promise<void> {
 		const existing = this.app.workspace.getLeavesOfType(SIDEKICK_VIEW_TYPE);
 		if (existing.length > 0 && existing[0]) {
-			this.app.workspace.revealLeaf(existing[0]);
+			void this.app.workspace.revealLeaf(existing[0]);
 			return;
 		}
 		const leaf = this.app.workspace.getRightLeaf(false);
 		if (leaf) {
 			await leaf.setViewState({type: SIDEKICK_VIEW_TYPE, active: true});
-			this.app.workspace.revealLeaf(leaf);
+			void this.app.workspace.revealLeaf(leaf);
 		}
 	}
 

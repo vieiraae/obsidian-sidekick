@@ -167,7 +167,8 @@ class SidekickGutterMarker extends GutterMarker {
 		return btn;
 	}
 
-	eq(other: SidekickGutterMarker): boolean {
+	// eslint-disable-next-line @typescript-eslint/no-unused-vars
+	eq(_other: SidekickGutterMarker): boolean {
 		// Always re-render so the loading state stays fresh
 		return false;
 	}
@@ -318,8 +319,6 @@ function buildPrompt(state: EditorState): string {
 export function buildGhostTextExtension(plugin: SidekickPlugin): Extension {
 	let debounceTimer: ReturnType<typeof setTimeout> | null = null;
 	let abortController: AbortController | null = null;
-	/** Document version at the time the request was fired. */
-	let requestVersion = -1;
 	let prewarmed = false;
 
 	/** Cancel any in-flight request and pending debounce. */
@@ -350,7 +349,6 @@ export function buildGhostTextExtension(plugin: SidekickPlugin): Extension {
 		if (!sel.empty) { new Notice('Sidekick: Place cursor without selection.'); return; }
 
 		const version = view.state.doc.length;
-		requestVersion = version;
 		void fetchCompletion(view, version);
 	}
 
@@ -380,7 +378,6 @@ export function buildGhostTextExtension(plugin: SidekickPlugin): Extension {
 		if (lineText.length < MIN_LINE_CHARS) return;
 
 		const version = view.state.doc.length; // cheap proxy for "version"
-		requestVersion = version;
 
 		debounceTimer = setTimeout(() => {
 			debounceTimer = null;

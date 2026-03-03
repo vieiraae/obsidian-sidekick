@@ -11,11 +11,6 @@ export function setDebugEnabled(enabled: boolean): void {
 	_enabled = enabled;
 }
 
-/** Log a debug message (only when debug mode is on). */
-export function debugLog(...args: unknown[]): void {
-	if (_enabled) console.log(...args);
-}
-
 /** Log a debug-level trace (only when debug mode is on). */
 export function debugTrace(...args: unknown[]): void {
 	if (_enabled) console.debug(...args);

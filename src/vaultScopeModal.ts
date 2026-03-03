@@ -1,4 +1,4 @@
-import {Modal, App, TFolder, TFile, setIcon, Menu} from 'obsidian';
+import {Modal, App, TFolder, setIcon, Menu} from 'obsidian';
 
 /**
  * Modal that displays the vault file tree with checkboxes for multi-selection.

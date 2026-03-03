@@ -1,5 +1,5 @@
 import type {TriggerConfig} from './types';
-import {debugLog, debugTrace} from './debug';
+import {debugTrace} from './debug';
 
 /**
  * Minimal 5-field cron expression matcher.
@@ -201,7 +201,6 @@ export class TriggerScheduler {
 						const lastFired = this.callbacks.getLastFired(key);
 						const elapsed = now - lastFired;
 						if (elapsed > 5_000) {
-							debugLog(`Sidekick: firing onFileChange trigger "${trigger.name}" for "${filePath}"`);
 							this.callbacks.setLastFired(key, now);
 							this.callbacks.onTriggerFire(trigger, {filePath});
 						} else {

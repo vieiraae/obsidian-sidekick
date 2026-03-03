@@ -1,5 +1,5 @@
-import {Editor, MarkdownView, Menu, Modal, Notice, TextComponent, TFile, TFolder, normalizePath} from 'obsidian';
-import {EditorView} from '@codemirror/view';
+import {Editor, EventRef, MarkdownView, Menu, Modal, Notice, TextComponent, TFile, TFolder, normalizePath} from 'obsidian';
+import type {EditorView} from '@codemirror/view';
 import type SidekickPlugin from './main';
 import {approveAll} from './copilot';
 import type {PermissionRequest, PermissionRequestResult} from './copilot';
@@ -58,10 +58,8 @@ export const ACTIONS: TextAction[] = [
  */
 export function registerEditorMenu(plugin: SidekickPlugin): void {
 	plugin.registerEvent(
-		// eslint-disable-next-line @typescript-eslint/no-explicit-any
-		(plugin.app.workspace as any).on('editor-menu', (menu: Menu, editor: Editor, view: MarkdownView) => {
-			// eslint-disable-next-line @typescript-eslint/no-explicit-any
-			const cmView: EditorView | undefined = (view as any).editor?.cm;
+		(plugin.app.workspace as unknown as {on: (name: string, cb: (menu: Menu, editor: Editor, view: MarkdownView) => void) => EventRef}).on('editor-menu', (menu: Menu, editor: Editor, view: MarkdownView) => {
+			const cmView: EditorView | undefined = (view as unknown as {editor?: {cm?: EditorView}}).editor?.cm;
 			if (!cmView) return;
 
 			menu.addItem((item) => {
@@ -84,8 +82,7 @@ async function openFileAndGetView(plugin: SidekickPlugin, file: TFile): Promise<
 	await leaf.openFile(file);
 	const view = leaf.view;
 	if (view instanceof MarkdownView) {
-		// eslint-disable-next-line @typescript-eslint/no-explicit-any
-		return (view as any).editor?.cm as EditorView | undefined ?? null;
+		return (view as unknown as {editor?: {cm?: EditorView}}).editor?.cm ?? null;
 	}
 	return null;
 }
@@ -96,8 +93,7 @@ async function openFileAndGetView(plugin: SidekickPlugin, file: TFile): Promise<
  */
 export function registerFileMenu(plugin: SidekickPlugin): void {
 	plugin.registerEvent(
-		// eslint-disable-next-line @typescript-eslint/no-explicit-any
-		(plugin.app.workspace as any).on('file-menu', (menu: Menu, abstractFile: TFile | TFolder) => {
+		(plugin.app.workspace as unknown as {on: (name: string, cb: (menu: Menu, abstractFile: TFile | TFolder) => void) => EventRef}).on('file-menu', (menu: Menu, abstractFile: TFile | TFolder) => {
 			if (abstractFile instanceof TFolder) {
 				buildFolderMenu(menu, plugin, abstractFile);
 				return;
@@ -198,7 +194,7 @@ function buildFolderMenu(menu: Menu, plugin: SidekickPlugin, folder: TFolder): v
 		submenu.addSeparator();
 
 		submenu.addItem((si) =>
-			si.setTitle('Chat with Sidekick')
+			si.setTitle('Chat with sidekick')
 				.setIcon('brain')
 				.onClick(() => void openSidekickViewWithScope(plugin, folder.path)),
 		);
@@ -226,7 +222,7 @@ function showNewNoteModal(plugin: SidekickPlugin, folder: TFolder): void {
 	const modal = new Modal(plugin.app);
 	modal.titleEl.setText('New note');
 
-	const desc = modal.contentEl.createEl('p', {
+	modal.contentEl.createEl('p', {
 		text: 'Optionally specify a template type for the note:',
 		cls: 'sidekick-menu-modal-desc',
 	});
@@ -427,7 +423,7 @@ async function runActionPrompt(
 				const modal = new Modal(plugin.app);
 				modal.titleEl.setText('Tool approval required');
 				const desc = modal.contentEl.createEl('p');
-				desc.setText(`Tool: ${request.toolName ?? 'unknown'}`);
+				desc.setText(`Permission: ${request.kind}${request.toolCallId ? ` (${request.toolCallId})` : ''}`);
 				const btnRow = modal.contentEl.createDiv({cls: 'modal-button-container'});
 				const allowBtn = btnRow.createEl('button', {text: 'Allow', cls: 'mod-cta'});
 				const denyBtn = btnRow.createEl('button', {text: 'Deny'});
@@ -548,8 +544,7 @@ async function extractAndInsertBelow(plugin: SidekickPlugin, file: TFile): Promi
 		new Notice('Sidekick: Open a note that contains this image first.');
 		return;
 	}
-	// eslint-disable-next-line @typescript-eslint/no-explicit-any
-	const cmView: EditorView | undefined = (activeView as any).editor?.cm;
+	const cmView: EditorView | undefined = (activeView as unknown as {editor?: {cm?: EditorView}}).editor?.cm;
 	if (!cmView) return;
 
 	const embed = findImageEmbed(cmView, file);
@@ -584,8 +579,7 @@ async function extractAndReplace(plugin: SidekickPlugin, file: TFile): Promise<v
 		new Notice('Sidekick: Open a note that contains this image first.');
 		return;
 	}
-	// eslint-disable-next-line @typescript-eslint/no-explicit-any
-	const cmView: EditorView | undefined = (activeView as any).editor?.cm;
+	const cmView: EditorView | undefined = (activeView as unknown as {editor?: {cm?: EditorView}}).editor?.cm;
 	if (!cmView) return;
 
 	const embed = findImageEmbed(cmView, file);
@@ -617,7 +611,7 @@ export function showEditNoteModal(plugin: SidekickPlugin, view: EditorView): voi
 	const modal = new Modal(plugin.app);
 	modal.titleEl.setText('Edit the note');
 
-	const desc = modal.contentEl.createEl('p', {
+	modal.contentEl.createEl('p', {
 		text: 'Describe how the note should be edited:',
 		cls: 'sidekick-menu-modal-desc',
 	});
@@ -677,12 +671,12 @@ export function showStructureModal(plugin: SidekickPlugin, view: EditorView): vo
 	const modal = new Modal(plugin.app);
 	modal.titleEl.setText('Structure and refine');
 
-	const desc = modal.contentEl.createEl('p', {
+	modal.contentEl.createEl('p', {
 		text: 'The note will be restructured using Markdown and refined for clarity.',
 		cls: 'sidekick-menu-modal-desc',
 	});
 
-	const label = modal.contentEl.createEl('label', {text: 'Template type (optional):', cls: 'sidekick-modal-label'});
+	modal.contentEl.createEl('label', {text: 'Template type (optional):', cls: 'sidekick-modal-label'});
 
 	const tc = new TextComponent(modal.contentEl);
 	tc.inputEl.classList.add('sidekick-modal-text-input');
@@ -804,7 +798,7 @@ export function buildSidekickMenu(menu: Menu, plugin: SidekickPlugin, view: Edit
 	menu.addSeparator();
 
 	menu.addItem((item) =>
-		item.setTitle('Chat with Sidekick')
+		item.setTitle('Chat with sidekick')
 			.setIcon('brain')
 			.onClick(() => openSidekickView(plugin)),
 	);

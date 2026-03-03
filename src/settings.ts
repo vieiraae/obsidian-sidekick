@@ -390,7 +390,7 @@ export class SidekickSettingTab extends PluginSettingTab {
 						}
 						// Attempt to create (and immediately destroy) a session to validate provider config
 						const testSession = await this.plugin.copilot.createSession({
-							onPermissionRequest: async () => ({allow: false, kind: 'denied-interactively-by-user' as const}),
+							onPermissionRequest: () => ({allow: false, kind: 'denied-interactively-by-user' as const}),
 							...(this.plugin.settings.providerModel ? {model: this.plugin.settings.providerModel} : {}),
 							...(this.plugin.settings.providerPreset !== 'github' && this.plugin.settings.providerBaseUrl
 								? {provider: (() => {
@@ -398,13 +398,13 @@ export class SidekickSettingTab extends PluginSettingTab {
 										openai: 'openai', azure: 'azure', anthropic: 'anthropic',
 										ollama: 'openai', 'foundry-local': 'openai', 'other-openai': 'openai',
 									};
-									const cfg: any = {
+									const cfg: ProviderConfig = {
 										type: typeMap[this.plugin.settings.providerPreset] ?? 'openai',
 										baseUrl: this.plugin.settings.providerBaseUrl,
 										wireApi: this.plugin.settings.providerWireApi,
+										...(this.plugin.settings.providerApiKey ? {apiKey: this.plugin.settings.providerApiKey} : {}),
+										...(this.plugin.settings.providerBearerToken ? {bearerToken: this.plugin.settings.providerBearerToken} : {}),
 									};
-									if (this.plugin.settings.providerApiKey) cfg.apiKey = this.plugin.settings.providerApiKey;
-									if (this.plugin.settings.providerBearerToken) cfg.bearerToken = this.plugin.settings.providerBearerToken;
 									return cfg;
 								})()}
 								: {}),
@@ -469,7 +469,7 @@ export class SidekickSettingTab extends PluginSettingTab {
 		};
 
 		// --- Sidekick settings section ---
-		new Setting(containerEl).setName('General').setHeading();
+		new Setting(containerEl).setName('Sidekick').setHeading();
 
 		new Setting(containerEl)
 			.setName('Inline operations model')
