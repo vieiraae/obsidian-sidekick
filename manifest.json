@@ -3,7 +3,7 @@
 	"name": "Sidekick",
 	"version": "0.6.0",
 	"minAppVersion": "0.15.0",
-	"description": "Meet your AI sidekick inside Obsidian — a second brain that brings agents, tools, skills, autocompletion, and smart workflows directly into your notes.",
+	"description": "Meet your AI sidekick — a second brain that brings agents, tools, skills, autocompletion, and smart workflows directly into your notes.",
 	"author": "Alex Vieira",
 	"authorUrl": "https://github.com/vieiraae/",
 	"isDesktopOnly": true
