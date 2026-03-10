@@ -2,54 +2,17 @@ import {Editor, EventRef, MarkdownView, Menu, Modal, Notice, TextComponent, TFil
 import type {EditorView} from '@codemirror/view';
 import type SidekickPlugin from './main';
 import {approveAll} from './copilot';
-import type {PermissionRequest, PermissionRequestResult} from './copilot';
+import type {PermissionRequest, PermissionRequestResult, UserInputRequest, UserInputResponse} from './copilot';
 import {setFetching, triggerComplete} from './ghostText';
 import {SIDEKICK_VIEW_TYPE, SidekickView} from './sidekickView';
+import {EditModal} from './editModal';
+import {TASKS, TEXT_ACTION_SYSTEM_MESSAGE} from './tasks';
+import type {TextTask} from './tasks';
+import type {SelectionInfo} from './types';
 
-/** Editor context-menu actions available via Sidekick. */
-export interface TextAction {
-	label: string;
-	icon: string;
-	prompt: (text: string) => string;
-}
-
-export const TEXT_ACTION_SYSTEM_MESSAGE =
-	'You are a text editor assistant. When given text to transform, return ONLY the transformed text. ' +
-	'Do not include any explanations, introductions, conclusions, or markdown code fences. ' +
-	'Do not wrap the output in quotes. Return the plain transformed text directly.';
-
-export const ACTIONS: TextAction[] = [
-	{
-		label: 'Fix grammar and spelling',
-		icon: 'check-check',
-		prompt: (t) => `Fix all grammar and spelling errors in the following text:\n\n${t}`,
-	},
-	{
-		label: 'Summarize',
-		icon: 'list',
-		prompt: (t) => `Summarize the following text concisely:\n\n${t}`,
-	},
-	{
-		label: 'Elaborate',
-		icon: 'expand',
-		prompt: (t) => `Elaborate on the following text, adding more detail and depth:\n\n${t}`,
-	},
-	{
-		label: 'Answer',
-		icon: 'message-circle',
-		prompt: (t) => `Answer the question or respond to the following text:\n\n${t}`,
-	},
-	{
-		label: 'Explain',
-		icon: 'lightbulb',
-		prompt: (t) => `Explain the following text in simple, clear terms:\n\n${t}`,
-	},
-	{
-		label: 'Rewrite',
-		icon: 'pencil',
-		prompt: (t) => `Rewrite the following text to improve clarity and readability:\n\n${t}`,
-	},
-];
+// Re-export for consumers that still import from editorMenu
+export {TEXT_ACTION_SYSTEM_MESSAGE} from './tasks';
+export type {TextTask as TextAction} from './tasks';
 
 /**
  * Register a "Sidekick" submenu on the editor right-click context menu.
@@ -186,6 +149,11 @@ function buildFolderMenu(menu: Menu, plugin: SidekickPlugin, folder: TFolder): v
 				.onClick(() => showNewNoteModal(plugin, folder)),
 		);
 		submenu.addItem((si) =>
+			si.setTitle('New canvas')
+				.setIcon('layout-dashboard')
+				.onClick(() => showNewCanvasModal(plugin, folder)),
+		);
+		submenu.addItem((si) =>
 			si.setTitle('New summary note')
 				.setIcon('file-text')
 				.onClick(() => void createSummaryNote(plugin, folder)),
@@ -193,6 +161,11 @@ function buildFolderMenu(menu: Menu, plugin: SidekickPlugin, folder: TFolder): v
 
 		submenu.addSeparator();
 
+		submenu.addItem((si) =>
+			si.setTitle('Semantic search')
+				.setIcon('search')
+				.onClick(() => void openSidekickSearchWithScope(plugin, folder.path)),
+		);
 		submenu.addItem((si) =>
 			si.setTitle('Chat with sidekick')
 				.setIcon('brain')
@@ -204,6 +177,19 @@ function buildFolderMenu(menu: Menu, plugin: SidekickPlugin, folder: TFolder): v
 /* ── Folder actions ─────────────────────────────────────────── */
 
 /** Generate a unique filename in the folder, based on a stem. */
+function uniqueFileName(folder: TFolder, stem: string, extension: string): string {
+	const existing = new Set(
+		folder.children
+			.filter((c): c is TFile => c instanceof TFile && c.extension === extension)
+			.map((f) => f.basename),
+	);
+	if (!existing.has(stem)) return stem;
+	for (let i = 2; ; i++) {
+		const candidate = `${stem} ${i}`;
+		if (!existing.has(candidate)) return candidate;
+	}
+}
+
 function uniqueNoteName(folder: TFolder, stem: string): string {
 	const existing = new Set(
 		folder.children
@@ -305,6 +291,113 @@ async function createNewNote(plugin: SidekickPlugin, folder: TFolder, templateTy
 	}
 }
 
+/** Show a modal asking for an optional template type, then create a new canvas. */
+function showNewCanvasModal(plugin: SidekickPlugin, folder: TFolder): void {
+	const modal = new Modal(plugin.app);
+	modal.titleEl.setText('New canvas');
+
+	modal.contentEl.createEl('p', {
+		text: 'Optionally specify a template type for the canvas:',
+		cls: 'sidekick-menu-modal-desc',
+	});
+
+	const tc = new TextComponent(modal.contentEl);
+	tc.inputEl.classList.add('sidekick-modal-text-input');
+	tc.setPlaceholder('Ex: brainstorming, project plan, mind map');
+
+	const btnRow = modal.contentEl.createDiv({cls: 'modal-button-container'});
+	const goBtn = btnRow.createEl('button', {text: 'Create', cls: 'mod-cta'});
+	const cancelBtn = btnRow.createEl('button', {text: 'Cancel'});
+
+	goBtn.addEventListener('click', () => {
+		modal.close();
+		void createNewCanvas(plugin, folder, tc.getValue().trim());
+	});
+	cancelBtn.addEventListener('click', () => modal.close());
+
+	modal.scope.register([], 'Enter', () => { goBtn.click(); return false; });
+
+	modal.open();
+	tc.inputEl.focus();
+}
+
+async function createNewCanvas(plugin: SidekickPlugin, folder: TFolder, templateType: string): Promise<void> {
+	if (!plugin.copilot) { new Notice('Copilot is not configured.'); return; }
+
+	const templateClause = templateType
+		? `The canvas should follow a "${templateType}" template. `
+		: '';
+
+	const notice = new Notice('Sidekick: creating canvas\u2026', 0);
+	try {
+		const {content: result, sessionId} = await plugin.copilot.inlineChat({
+			prompt:
+				`Create an Obsidian canvas. ${templateClause}` +
+				`Return the output in exactly this format:\n` +
+				`TITLE: <short descriptive title for the canvas>\n` +
+				`---\n` +
+				`<valid Obsidian canvas JSON>`,
+			model: plugin.settings.inlineModel || undefined,
+			systemMessage:
+				'You are a canvas creation assistant for Obsidian. When asked to create a canvas, return a title line ' +
+				'followed by the separator --- and then valid Obsidian .canvas JSON.\n\n' +
+				'Obsidian canvas format is a JSON object with "nodes" and "edges" arrays.\n' +
+				'Each node has: id (unique string), type ("text", "group", "file", or "link"), ' +
+				'x, y (number), width, height (number). Text nodes also have a "text" field (Markdown string). ' +
+				'Group nodes have a "label" field. Link nodes have a "url" field.\n' +
+				'Each edge has: id (unique string), fromNode, toNode (node id strings), ' +
+				'fromSide, toSide ("top"|"bottom"|"left"|"right"), and optionally "label" (string).\n' +
+				'Layout nodes with enough spacing (at least 50px gaps). Use reasonable sizes (width 250-400, height 100-250).\n' +
+				'Do not include markdown code fences or extra explanations. Return ONLY the title and JSON.',
+		});
+		registerInlineSession(plugin, sessionId, `New canvas in ${folder.name}`);
+
+		if (!result) { notice.hide(); new Notice('Sidekick: no response.'); return; }
+
+		// Parse title and content
+		let title = 'New canvas';
+		let content = result.trim();
+		const sepIndex = content.indexOf('---');
+		if (sepIndex !== -1) {
+			const header = content.slice(0, sepIndex).trim();
+			const titleMatch = header.match(/^TITLE:\s*(.+)/i);
+			if (titleMatch && titleMatch[1]) {
+				title = titleMatch[1].trim();
+			}
+			content = content.slice(sepIndex + 3).trim();
+		}
+
+		// Validate that content is valid JSON with nodes array
+		try {
+			const parsed = JSON.parse(content);
+			if (!parsed.nodes || !Array.isArray(parsed.nodes)) {
+				throw new Error('Missing nodes array');
+			}
+			content = JSON.stringify(parsed, null, '\t');
+		} catch (e) {
+			notice.hide();
+			new Notice(`Sidekick: invalid canvas format \u2014 ${String(e)}`);
+			return;
+		}
+
+		// Sanitise title for filename
+		title = title.replace(/[\\/:*?"<>|]/g, '').trim() || 'New canvas';
+		const basename = uniqueFileName(folder, title, 'canvas');
+		const filePath = normalizePath(`${folder.path}/${basename}.canvas`);
+
+		const newFile = await plugin.app.vault.create(filePath, content);
+		notice.hide();
+		new Notice(`Sidekick: created "${basename}".`);
+
+		// Open the new canvas
+		const leaf = plugin.app.workspace.getLeaf();
+		await leaf.openFile(newFile);
+	} catch (e) {
+		notice.hide();
+		new Notice(`Sidekick: error \u2014 ${String(e)}`);
+	}
+}
+
 async function createSummaryNote(plugin: SidekickPlugin, folder: TFolder): Promise<void> {
 	if (!plugin.copilot) { new Notice('Copilot is not configured.'); return; }
 
@@ -368,7 +461,7 @@ export async function runSelectionAction(
 	plugin: SidekickPlugin,
 	view: EditorView,
 	selectedText: string,
-	action: TextAction,
+	action: TextTask,
 ): Promise<void> {
 	if (!plugin.copilot) {
 		new Notice('Copilot is not configured.');
@@ -408,7 +501,7 @@ export async function runSelectionAction(
  */
 async function runActionPrompt(
 	plugin: SidekickPlugin,
-	action: TextAction,
+	action: TextTask,
 	selectedText: string,
 ): Promise<string | null> {
 	if (!plugin.copilot) return null;
@@ -433,11 +526,49 @@ async function runActionPrompt(
 			});
 		};
 
+	// Build user input handler that shows a simple modal when the agent asks
+	const userInputHandler = (request: UserInputRequest) => {
+		return new Promise<UserInputResponse>((resolve) => {
+			const modal = new Modal(plugin.app);
+			modal.titleEl.setText('Copilot needs your input');
+			modal.contentEl.createEl('p', {text: request.question});
+
+			if (request.choices && request.choices.length > 0) {
+				const choiceRow = modal.contentEl.createDiv({cls: 'modal-button-container'});
+				for (const choice of request.choices) {
+					const btn = choiceRow.createEl('button', {text: choice});
+					btn.addEventListener('click', () => { modal.close(); resolve({answer: choice, wasFreeform: false}); });
+				}
+			}
+
+			if (request.allowFreeform !== false) {
+				const input = modal.contentEl.createEl('textarea', {attr: {placeholder: 'Type your answer\u2026', rows: '3'}});
+				input.style.width = '100%';
+				input.style.marginTop = '8px';
+				const btnRow = modal.contentEl.createDiv({cls: 'modal-button-container'});
+				const submitBtn = btnRow.createEl('button', {text: 'Submit', cls: 'mod-cta'});
+				submitBtn.addEventListener('click', () => {
+					const answer = input.value.trim();
+					if (!answer) return;
+					modal.close();
+					resolve({answer, wasFreeform: true});
+				});
+				input.addEventListener('keydown', (e) => {
+					if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); submitBtn.click(); }
+				});
+			}
+
+			modal.onClose = () => { resolve({answer: '', wasFreeform: true}); };
+			modal.open();
+		});
+	};
+
 	const {content: result, sessionId} = await plugin.copilot.inlineChat({
 		prompt: action.prompt(selectedText),
 		model: plugin.settings.inlineModel || undefined,
 		systemMessage: TEXT_ACTION_SYSTEM_MESSAGE,
 		onPermissionRequest: permissionHandler,
+		onUserInputRequest: userInputHandler,
 	});
 	registerInlineSession(plugin, sessionId, action.label);
 
@@ -744,9 +875,21 @@ function registerInlineSession(plugin: SidekickPlugin, sessionId: string, descri
 	}
 }
 
-/** "Chat with Sidekick" — open the sidebar view. */
-export function openSidekickView(plugin: SidekickPlugin): void {
-	void plugin.activateView();
+export {type SelectionInfo} from './types';
+
+/** "Chat with Sidekick" — open the sidebar view, optionally with prompt text and selection. */
+export function openSidekickView(plugin: SidekickPlugin, promptText?: string, selection?: SelectionInfo): void {
+	void (async () => {
+		await plugin.activateView();
+		if (promptText || selection) {
+			const leaves = plugin.app.workspace.getLeavesOfType(SIDEKICK_VIEW_TYPE);
+			if (leaves.length > 0 && leaves[0]) {
+				const view = leaves[0].view as SidekickView;
+				if (promptText) view.setPromptText(promptText);
+				if (selection) view.addSelectionAttachment(promptText ?? '', selection);
+			}
+		}
+	})();
 }
 
 /** Open the Sidekick chat view with a specific folder set as scope. */
@@ -756,6 +899,17 @@ async function openSidekickViewWithScope(plugin: SidekickPlugin, folderPath: str
 	if (leaves.length > 0 && leaves[0]) {
 		const view = leaves[0].view as SidekickView;
 		view.setScope([folderPath]);
+		view.setWorkingDir(folderPath);
+	}
+}
+
+/** Open the Sidekick search tab scoped to a specific folder. */
+async function openSidekickSearchWithScope(plugin: SidekickPlugin, folderPath: string): Promise<void> {
+	await plugin.activateView();
+	const leaves = plugin.app.workspace.getLeavesOfType(SIDEKICK_VIEW_TYPE);
+	if (leaves.length > 0 && leaves[0]) {
+		const view = leaves[0].view as SidekickView;
+		view.openSearchWithScope(folderPath);
 	}
 }
 
@@ -774,7 +928,23 @@ export function buildSidekickMenu(menu: Menu, plugin: SidekickPlugin, view: Edit
 	if (hasSelection) {
 		// ── Selection: text-transform actions ──
 		const selectedText = view.state.sliceDoc(sel.from, sel.to);
-		for (const action of ACTIONS) {
+
+		// Edit — advanced editing with tone, length, choices
+		menu.addItem((item) =>
+			item.setTitle('Edit')
+				.setIcon('pencil-line')
+				.onClick(() => {
+					new EditModal(plugin, selectedText, (result) => {
+						const currentSel = view.state.selection.main;
+						view.dispatch({
+							changes: {from: currentSel.from, to: currentSel.to, insert: result},
+						});
+					}).open();
+				}),
+		);
+		menu.addSeparator();
+
+		for (const action of TASKS) {
 			menu.addItem((item) =>
 				item.setTitle(action.label)
 					.setIcon(action.icon)
@@ -800,7 +970,26 @@ export function buildSidekickMenu(menu: Menu, plugin: SidekickPlugin, view: Edit
 	menu.addItem((item) =>
 		item.setTitle('Chat with sidekick')
 			.setIcon('brain')
-			.onClick(() => openSidekickView(plugin)),
+			.onClick(() => {
+				if (hasSelection) {
+					const text = view.state.sliceDoc(sel.from, sel.to);
+					const startLine = view.state.doc.lineAt(sel.from);
+					const endLine = view.state.doc.lineAt(sel.to);
+					const activeFile = plugin.app.workspace.getActiveFile();
+					const filePath = activeFile?.path;
+					const fileName = activeFile?.name ?? 'unknown';
+					openSidekickView(plugin, text, {
+						filePath,
+						fileName,
+						startLine: startLine.number,
+						startChar: sel.from - startLine.from,
+						endLine: endLine.number,
+						endChar: sel.to - endLine.from,
+					});
+				} else {
+					openSidekickView(plugin);
+				}
+			}),
 	);
 
 	// ── Autocomplete submenu ──

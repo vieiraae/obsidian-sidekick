@@ -1,6 +1,6 @@
 {
 	"name": "obsidian-sidekick",
-	"version": "0.6.0",
+	"version": "1.0.0",
 	"description": "Your Obsidian sidekick.",
 	"main": "main.js",
 	"type": "module",
@@ -27,7 +27,7 @@
 		"typescript-eslint": "8.35.1"
 	},
 	"dependencies": {
-		"@github/copilot-sdk": "^0.1.26",
+		"@github/copilot-sdk": "^0.1.32",
 		"obsidian": "~1.10.3"
 	}
 }

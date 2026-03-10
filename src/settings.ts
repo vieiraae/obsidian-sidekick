@@ -1,8 +1,16 @@
-import {App, Notice, PluginSettingTab, Setting, normalizePath} from "obsidian";
+import {App, Modal, Notice, PluginSettingTab, Setting, normalizePath} from "obsidian";
 import SidekickPlugin from "./main";
 import type {ModelInfo, ProviderConfig} from "./copilot";
+import type {McpInputVariable} from "./types";
+import {loadMcpInputs} from "./configLoader";
 
 const DEFAULT_COPILOT_LOCATION = '';
+
+/** Helper to update a secure field in both runtime settings and local storage. */
+function updateSecureField(app: App, plugin: SidekickPlugin, key: keyof SidekickSettings, value: string): void {
+	(plugin.settings as unknown as Record<string, unknown>)[key] = value;
+	saveSecureField(app, key, value);
+}
 
 export interface SidekickSettings {
 	/** 'local' uses cliPath, 'remote' uses cliUrl. */
@@ -32,11 +40,49 @@ export interface SidekickSettings {
 	providerWireApi: 'completions' | 'responses';
 	/** Model name/ID to use with a BYOK provider. */
 	providerModel: string;
+	/** Persisted form defaults for the Edit modal. */
+	editModalDefaults?: EditModalDefaults;
 	/** Custom display names for sessions, keyed by SDK sessionId. */
 	sessionNames?: Record<string, string>;
 	/** Last-fired timestamps for trigger deduplication, keyed by trigger name. */
 	triggerLastFired?: Record<string, number>;
+	/** Stored values for non-password MCP input variables, keyed by input id. */
+	mcpInputValues?: Record<string, string>;
+	/** Reasoning effort level for model inference. 'default' means unset. */
+	reasoningEffort: '' | 'low' | 'medium' | 'high' | 'xhigh';
+	/** Agent name used for semantic search. */
+	searchAgent: string;
+	/** Search mode: 'basic' reuses session with minimal config, 'advanced' allows full agent/model/skills/tools. */
+	searchMode: 'basic' | 'advanced';
+
 }
+
+/** Persisted preferences for the Edit modal form. */
+export interface EditModalDefaults {
+	task: string;
+	adjustTask: boolean;
+	tone: string;
+	adjustTone: boolean;
+	format: string;
+	adjustFormat: boolean;
+	length: number;
+	adjustLength: boolean;
+	choices: number;
+	editPrompt: string;
+}
+
+export const DEFAULT_EDIT_MODAL: EditModalDefaults = {
+	task: 'Rewrite',
+	adjustTask: false,
+	tone: 'Professional',
+	adjustTone: false,
+	format: 'Single paragraph',
+	adjustFormat: false,
+	length: 5,
+	adjustLength: false,
+	choices: 4,
+	editPrompt: '',
+};
 
 export const DEFAULT_SETTINGS: SidekickSettings = {
 	copilotType: 'local',
@@ -54,6 +100,25 @@ export const DEFAULT_SETTINGS: SidekickSettings = {
 	providerBearerToken: '',
 	providerWireApi: 'completions',
 	providerModel: '',
+	reasoningEffort: '',
+	searchAgent: '',
+	searchMode: 'basic',
+}
+
+/** Fields stored in vault-specific local storage instead of data.json. */
+export const SECURE_FIELDS: ReadonlyArray<keyof SidekickSettings> = ['githubToken', 'providerApiKey', 'providerBearerToken'];
+
+const SECURE_PREFIX = 'sidekick-secure-';
+
+/** Load a secure field from vault-specific local storage. */
+export function loadSecureField(app: App, key: string): string {
+	const stored = app.loadLocalStorage(SECURE_PREFIX + key);
+	return stored != null ? String(stored) : '';
+}
+
+/** Save a secure field to vault-specific local storage. */
+export function saveSecureField(app: App, key: string, value: string): void {
+	app.saveLocalStorage(SECURE_PREFIX + key, value || null);
 }
 
 /** Derive the agents subfolder from the base Sidekick folder. */
@@ -117,13 +182,11 @@ Translate the provided text from English to Portuguese.
 `;
 
 const SAMPLE_TRIGGER_CONTENT = `---
-description: Daily planner
+name: Daily planner
+description: Prepares a plan for the day every morning at 8am
 agent: Planner
-triggers:
-  - type: scheduler 
-    cron: "0 8 * * *"
-  - type: onFileChange
-    glob: "**/*.md"
+cron: "0 8 * * *"
+glob: "**/*.md"
 enabled: true
 ---
 Help me prepare my day, including asks on me, recommendations for clear actions to prepare, and suggestions on which items to prioritize over others.
@@ -168,15 +231,14 @@ export class SidekickSettingTab extends PluginSettingTab {
 
 				new Setting(clientFieldsEl)
 					.setName('GitHub token')
-					.setDesc('GitHub token for authentication.')
+					.setDesc('GitHub token for authentication (stored securely).')
 					.addText(text => {
 						text.inputEl.type = 'password';
 						text.inputEl.autocomplete = 'off';
 						text.setPlaceholder('')
 							.setValue(this.plugin.settings.githubToken)
 							.onChange(async (value) => {
-								this.plugin.settings.githubToken = value.trim();
-								await this.plugin.saveSettings();
+								updateSecureField(this.app, this.plugin, 'githubToken', value.trim());
 								await this.plugin.initCopilot();
 							});
 					});
@@ -213,15 +275,14 @@ export class SidekickSettingTab extends PluginSettingTab {
 				if (!this.plugin.settings.useLoggedInUser) {
 					new Setting(clientFieldsEl)
 						.setName('GitHub token')
-						.setDesc('GitHub token for authentication.')
+						.setDesc('GitHub token for authentication (stored securely).')
 						.addText(text => {
 							text.inputEl.type = 'password';
 							text.inputEl.autocomplete = 'off';
 							text.setPlaceholder('')
 								.setValue(this.plugin.settings.githubToken)
 								.onChange(async (value) => {
-									this.plugin.settings.githubToken = value.trim();
-									await this.plugin.saveSettings();
+									updateSecureField(this.app, this.plugin, 'githubToken', value.trim());
 									await this.plugin.initCopilot();
 								});
 						});
@@ -310,27 +371,25 @@ export class SidekickSettingTab extends PluginSettingTab {
 
 				new Setting(providerFieldsEl)
 					.setName('API key')
-					.setDesc('Sent as optional header.')
+					.setDesc('Sent as optional header (stored securely).')
 					.addText(text => {
 						text.inputEl.type = 'password';
 						text.setPlaceholder('')
 							.setValue(this.plugin.settings.providerApiKey)
 							.onChange(async (value) => {
-								this.plugin.settings.providerApiKey = value.trim();
-								await this.plugin.saveSettings();
+								updateSecureField(this.app, this.plugin, 'providerApiKey', value.trim());
 							});
 					});
 
 				new Setting(providerFieldsEl)
 					.setName('Bearer token')
-					.setDesc('Authorization optional token header.')
+					.setDesc('Authorization optional token header (stored securely).')
 					.addText(text => {
 						text.inputEl.type = 'password';
 						text.setPlaceholder('')
 							.setValue(this.plugin.settings.providerBearerToken)
 							.onChange(async (value) => {
-								this.plugin.settings.providerBearerToken = value.trim();
-								await this.plugin.saveSettings();
+								updateSecureField(this.app, this.plugin, 'providerBearerToken', value.trim());
 							});
 					});
 
@@ -561,6 +620,16 @@ export class SidekickSettingTab extends PluginSettingTab {
 				}));
 
 		new Setting(containerEl)
+			.setName('Enable ghost-text autocomplete')
+			.setDesc('Show inline suggestions as you type (uses the inline operations model).')
+			.addToggle(toggle => toggle
+				.setValue(this.plugin.settings.autocompleteEnabled)
+				.onChange(async (value) => {
+					this.plugin.settings.autocompleteEnabled = value;
+					await this.plugin.saveSettings();
+				}));
+
+		new Setting(containerEl)
 			.setName('Tools approval')
 			.setDesc('Whether tool invocations require manual approval or are allowed automatically.')
 			.addDropdown(dropdown => dropdown
@@ -571,17 +640,158 @@ export class SidekickSettingTab extends PluginSettingTab {
 					await this.plugin.saveSettings();
 				}));
 
-		new Setting(containerEl)
-			.setName('Enable ghost-text autocomplete')
-			.setDesc('Show inline suggestions as you type (uses the inline operations model).')
-			.addToggle(toggle => toggle
-				.setValue(this.plugin.settings.autocompleteEnabled)
-				.onChange(async (value) => {
-					this.plugin.settings.autocompleteEnabled = value;
-					await this.plugin.saveSettings();
+		// ── MCP input variables section (collapsible) ───────────
+		let mcpExpanded = false;
+		const mcpInputsEl = containerEl.createDiv();
+		mcpInputsEl.style.display = 'none';
+		new Setting(containerEl.createDiv())
+			.setName('MCP input variables')
+			.setHeading()
+			.addExtraButton(btn => btn
+				.setIcon('chevron-right')
+				.setTooltip('Toggle section')
+				.onClick(() => {
+					mcpExpanded = !mcpExpanded;
+					mcpInputsEl.style.display = mcpExpanded ? '' : 'none';
+					btn.setIcon(mcpExpanded ? 'chevron-down' : 'chevron-right');
 				}));
+		containerEl.appendChild(mcpInputsEl);
+		const renderMcpInputs = async () => {
+			mcpInputsEl.empty();
+			new Setting(mcpInputsEl)
+				.setDesc('Manage values for input variables defined in mcp.json. Password inputs are stored securely.');
+
+			let inputs: McpInputVariable[] = [];
+			try {
+				inputs = await loadMcpInputs(this.app, getToolsFolder(this.plugin.settings));
+			} catch {
+				// mcp.json may not exist yet
+			}
+
+			if (inputs.length === 0) {
+				mcpInputsEl.createEl('p', {
+					text: 'No input variables defined in mcp.json.',
+					cls: 'setting-item-description',
+				});
+			} else {
+				for (const input of inputs) {
+					const isPassword = input.password === true;
+					const currentValue = await getMcpInputValue(this.app, this.plugin, input.id, isPassword);
+					new Setting(mcpInputsEl)
+						.setName(input.id)
+						.setDesc(input.description + (isPassword ? ' (password — stored securely)' : ''))
+						.addText(text => {
+							if (isPassword) {
+								text.inputEl.type = 'password';
+								text.inputEl.autocomplete = 'off';
+							}
+							text.setPlaceholder('Enter value…')
+								.setValue(currentValue ?? '')
+								.onChange(async (value) => {
+									await setMcpInputValue(this.app, this.plugin, input.id, value, isPassword);
+								});
+						})
+						.addExtraButton(button => button
+							.setIcon('trash')
+							.setTooltip('Delete stored value')
+							.onClick(async () => {
+								await deleteMcpInputValue(this.app, this.plugin, input.id, isPassword);
+								await renderMcpInputs();
+								new Notice(`Deleted value for input "${input.id}".`);
+							}));
+				}
+			}
+		};
+		void renderMcpInputs();
 
 		// Auto-refresh models when opening settings
 		void refreshModels();
+	}
+}
+
+// ── MCP Input value helpers ─────────────────────────────────
+
+const MCP_SECRET_PREFIX = 'sidekick-mcp-input-';
+
+/** Retrieve the stored value for an MCP input variable. */
+export async function getMcpInputValue(app: App, plugin: SidekickPlugin, id: string, isPassword: boolean): Promise<string | undefined> {
+	if (isPassword) {
+		const stored = app.loadLocalStorage(MCP_SECRET_PREFIX + id);
+		return stored != null ? String(stored) : undefined;
+	}
+	return plugin.settings.mcpInputValues?.[id];
+}
+
+/** Store a value for an MCP input variable. */
+export async function setMcpInputValue(app: App, plugin: SidekickPlugin, id: string, value: string, isPassword: boolean): Promise<void> {
+	if (isPassword) {
+		app.saveLocalStorage(MCP_SECRET_PREFIX + id, value);
+	} else {
+		if (!plugin.settings.mcpInputValues) plugin.settings.mcpInputValues = {};
+		plugin.settings.mcpInputValues[id] = value;
+		await plugin.saveSettings();
+	}
+}
+
+/** Delete the stored value for an MCP input variable. */
+export async function deleteMcpInputValue(app: App, plugin: SidekickPlugin, id: string, isPassword: boolean): Promise<void> {
+	if (isPassword) {
+		app.saveLocalStorage(MCP_SECRET_PREFIX + id, null);
+	} else {
+		if (plugin.settings.mcpInputValues) {
+			delete plugin.settings.mcpInputValues[id];
+			await plugin.saveSettings();
+		}
+	}
+}
+
+/**
+ * Modal that prompts the user to provide a value for a missing MCP input variable.
+ */
+export class McpInputPromptModal extends Modal {
+	private readonly input: McpInputVariable;
+	private readonly onSubmit: (value: string | undefined) => void;
+
+	constructor(app: App, input: McpInputVariable, onSubmit: (value: string | undefined) => void) {
+		super(app);
+		this.input = input;
+		this.onSubmit = onSubmit;
+	}
+
+	onOpen(): void {
+		const {contentEl} = this;
+		contentEl.createEl('h3', {text: 'MCP input required'});
+		contentEl.createEl('p', {text: this.input.description});
+		contentEl.createEl('p', {text: `Variable: ${this.input.id}`, cls: 'setting-item-description'});
+
+		let inputValue = '';
+		new Setting(contentEl)
+			.setName('Value')
+			.addText(text => {
+				if (this.input.password) {
+					text.inputEl.type = 'password';
+					text.inputEl.autocomplete = 'off';
+				}
+				text.setPlaceholder('Enter value…')
+					.onChange(v => { inputValue = v; });
+				// Focus input after render
+				setTimeout(() => text.inputEl.focus(), 50);
+			});
+
+		const btnRow = contentEl.createDiv({cls: 'modal-button-container'});
+		const saveBtn = btnRow.createEl('button', {text: 'Save', cls: 'mod-cta'});
+		saveBtn.addEventListener('click', () => {
+			this.close();
+			this.onSubmit(inputValue || undefined);
+		});
+		const cancelBtn = btnRow.createEl('button', {text: 'Cancel'});
+		cancelBtn.addEventListener('click', () => {
+			this.close();
+			this.onSubmit(undefined);
+		});
+	}
+
+	onClose(): void {
+		this.contentEl.empty();
 	}
 }

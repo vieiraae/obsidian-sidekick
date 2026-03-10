@@ -1,5 +1,5 @@
 import {Plugin} from 'obsidian';
-import {DEFAULT_SETTINGS, SidekickSettings, SidekickSettingTab} from "./settings";
+import {DEFAULT_SETTINGS, SidekickSettings, SidekickSettingTab, SECURE_FIELDS, loadSecureField, saveSecureField} from "./settings";
 import {CopilotService} from "./copilot";
 import {SidekickView, SIDEKICK_VIEW_TYPE} from "./sidekickView";
 import {registerEditorMenu, registerFileMenu} from './editorMenu';
@@ -88,10 +88,37 @@ export default class SidekickPlugin extends Plugin {
 	}
 
 	async loadSettings() {
-		this.settings = Object.assign({}, DEFAULT_SETTINGS, await this.loadData() as Partial<SidekickSettings>);
+		const raw = await this.loadData() as Partial<SidekickSettings> | null;
+		this.settings = Object.assign({}, DEFAULT_SETTINGS, raw);
+
+		// Migrate any plaintext secrets from data.json to local storage, then strip
+		let needsSave = false;
+		for (const key of SECURE_FIELDS) {
+			const plaintext = raw?.[key];
+			if (plaintext && typeof plaintext === 'string') {
+				// Migrate: write to local storage if not already present
+				const existing = loadSecureField(this.app, key);
+				if (!existing) {
+					saveSecureField(this.app, key, plaintext);
+				}
+				needsSave = true;
+			}
+			// Load from secure storage into runtime settings
+			(this.settings as unknown as Record<string, unknown>)[key] = loadSecureField(this.app, key);
+		}
+
+		// Strip plaintext secrets from data.json if they were present
+		if (needsSave) {
+			await this.saveSettings();
+		}
 	}
 
 	async saveSettings() {
-		await this.saveData(this.settings);
+		// Clone settings and strip secure fields before writing to data.json
+		const dataToSave = {...this.settings};
+		for (const key of SECURE_FIELDS) {
+			(dataToSave as Record<string, unknown>)[key] = '';
+		}
+		await this.saveData(dataToSave);
 	}
 }

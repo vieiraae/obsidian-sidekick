@@ -25,6 +25,14 @@ export interface McpServerEntry {
 	config: Record<string, unknown>;
 }
 
+/** An input variable definition from the mcp.json "inputs" array. */
+export interface McpInputVariable {
+	type: string;
+	id: string;
+	description: string;
+	password?: boolean;
+}
+
 /** A message in the Sidekick chat conversation. */
 export interface ChatMessage {
 	id: string;
@@ -47,21 +55,31 @@ export interface PromptConfig {
 
 /** An attachment added to a chat message. */
 export interface ChatAttachment {
-	type: 'file' | 'directory' | 'clipboard' | 'image';
+	type: 'file' | 'directory' | 'clipboard' | 'image' | 'selection';
 	name: string;
-	/** Vault-relative path (for files, directories, images) or absolute OS path when `absolutePath` is true. */
+	/** Vault-relative path (for files, directories, images, selections) or absolute OS path when `absolutePath` is true. */
 	path?: string;
-	/** Raw text content (for clipboard). */
+	/** Raw text content (for clipboard or selection). */
 	content?: string;
 	/** When true, `path` is an absolute OS path (not vault-relative). */
 	absolutePath?: boolean;
+	/** Selection range (1-based line numbers). */
+	selection?: {
+		startLine: number;
+		startChar: number;
+		endLine: number;
+		endChar: number;
+	};
 }
 
-/** A single trigger definition within a trigger file. */
-export interface TriggerEntry {
-	type: string;
-	cron?: string;
-	glob?: string;
+/** Selection info passed when "Chat with sidekick" is invoked on selected text. */
+export interface SelectionInfo {
+	filePath?: string;
+	fileName: string;
+	startLine: number;
+	startChar: number;
+	endLine: number;
+	endChar: number;
 }
 
 /** Parsed trigger configuration from *.trigger.md. */
@@ -71,7 +89,12 @@ export interface TriggerConfig {
 	agent?: string;
 	/** Whether the trigger is active. Defaults to true when not set. */
 	enabled: boolean;
-	triggers: TriggerEntry[];
+	/** Cron expression for scheduled triggers (5-field: min hour dom month dow). */
+	cron?: string;
+	/** Glob pattern for file-change triggers. */
+	glob?: string;
 	/** Prompt content to send when the trigger fires. */
 	content: string;
+	/** Vault-relative path to the trigger file. */
+	filePath: string;
 }

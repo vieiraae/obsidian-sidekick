@@ -25,6 +25,7 @@ npm install
 
 ```bash
 npm run dev
+obsidian plugin:reload id=sidekick
 ```
 
 ### Production build
@@ -84,7 +85,13 @@ npm run build
   ```
   <Vault>/.obsidian/plugins/<plugin-id>/
   ```
-- Reload Obsidian and enable the plugin in **Settings → Community plugins**.
+- Reload Obsidian and enable the plugin in 
+**Settings → Community plugins**.
+- For auto reload run:
+
+```bash
+obsidian plugin:reload id=sidekick
+```
 
 ## Commands & settings
 
@@ -238,6 +245,12 @@ this.registerInterval(window.setInterval(() => { /* ... */ }, 1000));
 
 - Plugin doesn't load after build: ensure `main.js` and `manifest.json` are at the top level of the plugin folder under `<Vault>/.obsidian/plugins/<plugin-id>/`. 
 - Build issues: if `main.js` is missing, run `npm run build` or `npm run dev` to compile your TypeScript source code.
+- Reload the plugin:
+
+```bash
+obsidian plugin:reload id=sidekick
+```
+
 - Commands not appearing: verify `addCommand` runs after `onload` and IDs are unique.
 - Settings not persisting: ensure `loadData`/`saveData` are awaited and you re-render the UI after changes.
 - Mobile-only issues: confirm you're not using desktop-only APIs; check `isDesktopOnly` and adjust.

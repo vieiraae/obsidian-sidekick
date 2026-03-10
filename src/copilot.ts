@@ -18,7 +18,7 @@ import type {
 	PermissionRequestResult,
 	PermissionHandler,
 } from '@github/copilot-sdk';
-import type {ProviderConfig} from '@github/copilot-sdk/dist/types';
+import type {ProviderConfig, UserInputHandler, UserInputRequest, UserInputResponse, ReasoningEffort} from '@github/copilot-sdk/dist/types';
 
 // Available at runtime in the esbuild CJS bundle.
 const nodeRequire = typeof globalThis.require === 'function' ? globalThis.require : undefined;
@@ -173,7 +173,7 @@ export class CopilotService {
 	 */
 	async createSession(config: SessionConfig): Promise<CopilotSession> {
 		await this.ensureConnected();
-		return await this.client!.createSession(config);
+		return await this.client!.createSession({clientName: 'obsidian-sidekick', ...config});
 	}
 
 	/**
@@ -184,10 +184,11 @@ export class CopilotService {
 	 */
 	async resumeSession(
 		sessionId: string,
-		config?: Partial<SessionConfig>,
+		config: Omit<SessionConfig, 'clientName'>,
 	): Promise<CopilotSession> {
 		await this.ensureConnected();
 		return await this.client!.resumeSession(sessionId, {
+			clientName: 'obsidian-sidekick',
 			...config,
 		});
 	}
@@ -229,11 +230,13 @@ export class CopilotService {
 		systemMessage?: string;
 		customAgents?: CustomAgentConfig[];
 		onPermissionRequest?: PermissionHandler;
+		onUserInputRequest?: UserInputHandler;
 		attachments?: MessageOptions['attachments'];
 	}): Promise<string | undefined> {
 		const session = await this.createSession({
 			model: options.model,
 			onPermissionRequest: options.onPermissionRequest ?? approveAll,
+			...(options.onUserInputRequest ? {onUserInputRequest: options.onUserInputRequest} : {}),
 			customAgents: options.customAgents,
 			...(options.systemMessage
 				? {systemMessage: {content: options.systemMessage}}
@@ -264,11 +267,13 @@ export class CopilotService {
 		systemMessage?: string;
 		customAgents?: CustomAgentConfig[];
 		onPermissionRequest?: PermissionHandler;
+		onUserInputRequest?: UserInputHandler;
 		attachments?: MessageOptions['attachments'];
 	}): Promise<{content: string | undefined; sessionId: string}> {
 		const session = await this.createSession({
 			model: options.model,
 			onPermissionRequest: options.onPermissionRequest ?? approveAll,
+			...(options.onUserInputRequest ? {onUserInputRequest: options.onUserInputRequest} : {}),
 			customAgents: options.customAgents,
 			...(options.systemMessage
 				? {systemMessage: {content: options.systemMessage}}
@@ -326,6 +331,10 @@ export type {
 	PermissionRequest,
 	PermissionRequestResult,
 	PermissionHandler,
+	UserInputHandler,
+	UserInputRequest,
+	UserInputResponse,
 	SessionListFilter,
 	ProviderConfig,
+	ReasoningEffort,
 };

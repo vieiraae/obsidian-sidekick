@@ -1,5 +1,5 @@
 import {App, normalizePath, TFile, TFolder} from 'obsidian';
-import type {AgentConfig, SkillInfo, McpServerEntry, PromptConfig, TriggerConfig, TriggerEntry} from './types';
+import type {AgentConfig, SkillInfo, McpServerEntry, McpInputVariable, PromptConfig, TriggerConfig} from './types';
 
 /** Module-level compiled regex for frontmatter detection. */
 const FM_RE = /^---\r?\n([\s\S]*?)\r?\n---\r?\n?([\s\S]*)$/;
@@ -19,7 +19,11 @@ function parseFrontmatter(content: string): {meta: Record<string, string | strin
 		const idx = line.indexOf(':');
 		if (idx > 0 && !line.match(/^\s+-/)) {
 			const key = line.slice(0, idx).trim();
-			const val = line.slice(idx + 1).trim();
+			let val = line.slice(idx + 1).trim();
+			// Strip surrounding quotes (single or double)
+			if ((val.startsWith('"') && val.endsWith('"')) || (val.startsWith("'") && val.endsWith("'"))) {
+				val = val.slice(1, -1);
+			}
 			if (key) {
 				currentKey = key;
 				meta[key] = val;
@@ -67,8 +71,8 @@ export async function loadAgents(app: App, agentsFolder: string): Promise<AgentC
 			name: (typeof meta['name'] === 'string' ? meta['name'] : '') || child.basename.replace('.agent', ''),
 			description: (typeof meta['description'] === 'string' ? meta['description'] : '') || '',
 			model: (typeof meta['model'] === 'string' && meta['model']) || undefined,
-			tools: Array.isArray(rawTools) ? rawTools : (typeof rawTools === 'string' && rawTools ? rawTools.split(',').map(t => t.trim()).filter(Boolean) : undefined),
-			skills: Array.isArray(rawSkills) ? rawSkills : (typeof rawSkills === 'string' && rawSkills ? rawSkills.split(',').map(s => s.trim()).filter(Boolean) : undefined),
+			tools: Array.isArray(rawTools) ? rawTools : (typeof rawTools === 'string' && rawTools ? rawTools.split(',').map(t => t.trim()).filter(Boolean) : ('tools' in meta ? [] : undefined)),
+			skills: Array.isArray(rawSkills) ? rawSkills : (typeof rawSkills === 'string' && rawSkills ? rawSkills.split(',').map(s => s.trim()).filter(Boolean) : ('skills' in meta ? [] : undefined)),
 			instructions: body.trim(),
 			filePath: child.path,
 		});
@@ -135,10 +139,90 @@ export async function loadPrompts(app: App, promptsFolder: string): Promise<Prom
 }
 
 /**
+ * Load MCP input variable definitions from mcp.json.
+ */
+export async function loadMcpInputs(app: App, toolsFolder: string): Promise<McpInputVariable[]> {
+	const mcpPath = normalizePath(`${toolsFolder}/mcp.json`);
+	const mcpFile = app.vault.getAbstractFileByPath(mcpPath);
+	if (!mcpFile || !(mcpFile instanceof TFile)) return [];
+
+	try {
+		const content = await app.vault.read(mcpFile);
+		const parsed = JSON.parse(content) as Record<string, unknown>;
+		if (!parsed || typeof parsed !== 'object') return [];
+		return parseMcpInputs(parsed);
+	} catch {
+		return [];
+	}
+}
+
+/** Extract McpInputVariable[] from parsed mcp.json. */
+function parseMcpInputs(parsed: Record<string, unknown>): McpInputVariable[] {
+	const rawInputs = parsed['inputs'];
+	if (!Array.isArray(rawInputs)) return [];
+	const inputs: McpInputVariable[] = [];
+	for (const item of rawInputs) {
+		if (item && typeof item === 'object' && 'id' in item && 'description' in item) {
+			const obj = item as Record<string, unknown>;
+			inputs.push({
+				type: typeof obj['type'] === 'string' ? obj['type'] : 'promptString',
+				id: String(obj['id']),
+				description: String(obj['description']),
+				password: obj['password'] === true || obj['password'] === 'true',
+			});
+		}
+	}
+	return inputs;
+}
+
+/** Regex matching ${input:variableId} placeholders. */
+const INPUT_VAR_RE = /\$\{input:([^}]+)\}/g;
+
+/**
+ * Recursively resolve ${input:...} placeholders in a value.
+ * Returns the resolved string, or the original if no placeholders found.
+ */
+function resolveInputPlaceholders(value: string, valueMap: ReadonlyMap<string, string>): string {
+	return value.replace(INPUT_VAR_RE, (match, id: string) => {
+		const resolved = valueMap.get(id);
+		return resolved !== undefined ? resolved : match;
+	});
+}
+
+/**
+ * Resolve all ${input:...} placeholders in a server config object (env, headers, url, etc.).
+ * Mutates a deep copy of the config.
+ */
+function resolveConfigInputs(config: Record<string, unknown>, valueMap: ReadonlyMap<string, string>): Record<string, unknown> {
+	const resolved: Record<string, unknown> = {};
+	for (const [key, val] of Object.entries(config)) {
+		if (typeof val === 'string') {
+			resolved[key] = resolveInputPlaceholders(val, valueMap);
+		} else if (val && typeof val === 'object' && !Array.isArray(val)) {
+			resolved[key] = resolveConfigInputs(val as Record<string, unknown>, valueMap);
+		} else if (Array.isArray(val)) {
+			resolved[key] = val.map(item => typeof item === 'string' ? resolveInputPlaceholders(item, valueMap) : item);
+		} else {
+			resolved[key] = val;
+		}
+	}
+	return resolved;
+}
+
+/** Callback to resolve a missing input variable value. Return undefined to skip. */
+export type InputResolver = (input: McpInputVariable) => Promise<string | undefined>;
+
+/**
  * Load MCP server entries from mcp.json in the given vault tools folder.
  * Supports both { "servers": { ... } } and { "mcpServers": { ... } } formats.
+ * When a resolveInput callback is provided, ${input:...} placeholders in server
+ * configs are resolved using stored values or by prompting the user.
  */
-export async function loadMcpServers(app: App, toolsFolder: string): Promise<McpServerEntry[]> {
+export async function loadMcpServers(
+	app: App,
+	toolsFolder: string,
+	resolveInput?: InputResolver,
+): Promise<McpServerEntry[]> {
 	const mcpPath = normalizePath(`${toolsFolder}/mcp.json`);
 	const entries: McpServerEntry[] = [];
 	const mcpFile = app.vault.getAbstractFileByPath(mcpPath);
@@ -149,6 +233,20 @@ export async function loadMcpServers(app: App, toolsFolder: string): Promise<Mcp
 		const parsed = JSON.parse(content) as Record<string, unknown>;
 		if (!parsed || typeof parsed !== 'object') return entries;
 
+		// Parse input definitions
+		const inputs = parseMcpInputs(parsed);
+
+		// Build value map for all inputs
+		const valueMap = new Map<string, string>();
+		if (resolveInput && inputs.length > 0) {
+			for (const input of inputs) {
+				const value = await resolveInput(input);
+				if (value !== undefined) {
+					valueMap.set(input.id, value);
+				}
+			}
+		}
+
 		// Accept both "servers" and "mcpServers" keys
 		const serversObj =
 			(parsed['servers'] as Record<string, unknown> | undefined) ??
@@ -157,54 +255,16 @@ export async function loadMcpServers(app: App, toolsFolder: string): Promise<Mcp
 		if (serversObj && typeof serversObj === 'object') {
 			for (const [name, config] of Object.entries(serversObj)) {
 				if (config && typeof config === 'object') {
-					entries.push({name, config: config as Record<string, unknown>});
+					const resolvedConfig = valueMap.size > 0
+						? resolveConfigInputs(config as Record<string, unknown>, valueMap)
+						: config as Record<string, unknown>;
+					entries.push({name, config: resolvedConfig});
 				}
 			}
 		}
 	} catch (e) {
 		console.error('Sidekick: failed to parse mcp.json', e);
 	}
-	return entries;
-}
-
-/**
- * Parse a YAML triggers array from raw frontmatter text.
- * Handles the nested structure: triggers:\n  - type: ...\n    cron: ...
- */
-function parseTriggerEntries(raw: string): TriggerEntry[] {
-	const entries: TriggerEntry[] = [];
-	// Find the triggers: block
-	const triggersMatch = raw.match(/^triggers:\s*(?:#.*)?$/m);
-	if (!triggersMatch) return entries;
-
-	const startIdx = (triggersMatch.index ?? 0) + triggersMatch[0].length;
-	const lines = raw.slice(startIdx).split('\n');
-
-	let current: Partial<TriggerEntry> | null = null;
-	for (const line of lines) {
-		const trimmed = line.replace(/#.*$/, '').trimEnd();
-		// Stop when we hit a non-indented, non-empty line (next top-level key)
-		if (trimmed && !trimmed.startsWith(' ') && !trimmed.startsWith('\t')) break;
-		if (!trimmed.trim()) continue;
-
-		const itemMatch = trimmed.match(/^\s+-\s+type:\s*(.+)/);
-		if (itemMatch) {
-			if (current?.type) entries.push(current as TriggerEntry);
-			current = {type: itemMatch[1]!.trim()};
-			continue;
-		}
-
-		if (current) {
-			const kvMatch = trimmed.match(/^\s+(\w+):\s*"?([^"]*)"?\s*$/);
-			if (kvMatch) {
-				const key = kvMatch[1]!.trim();
-				const val = kvMatch[2]!.trim();
-				if (key === 'cron') current.cron = val;
-				else if (key === 'glob') current.glob = val;
-			}
-		}
-	}
-	if (current?.type) entries.push(current as TriggerEntry);
 	return entries;
 }
 
@@ -232,13 +292,17 @@ export async function loadTriggers(app: App, triggersFolder: string): Promise<Tr
 		// Parse frontmatter by wrapping in --- delimiters so parseFrontmatter can process it
 		const {meta} = parseFrontmatter(`---\n${rawFm}\n---\n`);
 
+		const id = child.basename.replace('.trigger', '');
+
 		triggers.push({
-			name: child.basename.replace('.trigger', ''),
+			name: (typeof meta['name'] === 'string' && meta['name']) || id,
 			description: (typeof meta['description'] === 'string' && meta['description']) || undefined,
 			agent: (typeof meta['agent'] === 'string' && meta['agent']) || undefined,
 			enabled: String(meta['enabled']).toLowerCase() !== 'false',
-			triggers: parseTriggerEntries(rawFm),
+			cron: (typeof meta['cron'] === 'string' && meta['cron']) || undefined,
+			glob: (typeof meta['glob'] === 'string' && meta['glob']) || undefined,
 			content: body,
+			filePath: child.path,
 		});
 	}
 	return triggers;

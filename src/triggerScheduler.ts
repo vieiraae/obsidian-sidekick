@@ -134,7 +134,10 @@ export class TriggerScheduler {
 	private getGlobRegex(glob: string): RegExp {
 		let re = this.globCache.get(glob);
 		if (!re) {
-			re = globToRegex(glob);
+			// If glob has no directory separator, match anywhere in the path tree
+			// (e.g., "*.md" matches "folder/file.md", not just root-level "file.md")
+			const effective = glob.includes('/') ? glob : '**/' + glob;
+			re = globToRegex(effective);
 			this.globCache.set(glob, re);
 		}
 		return re;
@@ -165,14 +168,13 @@ export class TriggerScheduler {
 		const minuteKey = Math.floor(now.getTime() / 60_000) * 60_000;
 
 		for (const trigger of this.triggers) {
-			for (const entry of trigger.triggers) {
-				if (entry.type === 'scheduler' && entry.cron) {
-					if (cronMatches(entry.cron, now)) {
-						const lastFired = this.callbacks.getLastFired(trigger.name);
-						if (lastFired < minuteKey) {
-							this.callbacks.setLastFired(trigger.name, minuteKey);
-							this.callbacks.onTriggerFire(trigger);
-						}
+			if (trigger.cron) {
+				if (cronMatches(trigger.cron, now)) {
+					const lastFired = this.callbacks.getLastFired(trigger.name);
+					if (lastFired < minuteKey) {
+						console.log(`Sidekick: firing cron trigger "${trigger.name}"`);
+						this.callbacks.setLastFired(trigger.name, minuteKey);
+						this.callbacks.onTriggerFire(trigger);
 					}
 				}
 			}
@@ -189,25 +191,22 @@ export class TriggerScheduler {
 			debugTrace('Sidekick: checkFileChangeTriggers — no triggers loaded');
 			return;
 		}
-		debugTrace(`Sidekick: checkFileChangeTriggers("${filePath}") — ${this.triggers.length} trigger(s)`);
-		for (const trigger of this.triggers) {
-			for (const entry of trigger.triggers) {
-				if (entry.type === 'onFileChange' && entry.glob) {
-					const regex = this.getGlobRegex(entry.glob);
-					const matches = regex.test(filePath);
-					debugTrace(`Sidekick: trigger "${trigger.name}" glob="${entry.glob}" regex=${regex} match=${matches}`);
-					if (matches) {
-						const key = `file:${trigger.name}`;
-						const lastFired = this.callbacks.getLastFired(key);
-						const elapsed = now - lastFired;
-						if (elapsed > 5_000) {
-							this.callbacks.setLastFired(key, now);
-							this.callbacks.onTriggerFire(trigger, {filePath});
-						} else {
-							debugTrace(`Sidekick: trigger "${trigger.name}" skipped — cooldown (${Math.round(elapsed / 1000)}s / 5s)`);
-						}
-						break; // Don't fire same trigger twice for same event
-					}
+		const globTriggers = this.triggers.filter(t => t.glob);
+		debugTrace(`Sidekick: checkFileChangeTriggers("${filePath}") — ${this.triggers.length} trigger(s), ${globTriggers.length} with glob`);
+		for (const trigger of globTriggers) {
+			const regex = this.getGlobRegex(trigger.glob!);
+			const matches = regex.test(filePath);
+			debugTrace(`Sidekick: trigger "${trigger.name}" glob="${trigger.glob}" regex=${regex} match=${matches}`);
+			if (matches) {
+				const key = `file:${trigger.name}`;
+				const lastFired = this.callbacks.getLastFired(key);
+				const elapsed = now - lastFired;
+				if (elapsed > 5_000) {
+					console.log(`Sidekick: firing trigger "${trigger.name}" for file "${filePath}"`);
+					this.callbacks.setLastFired(key, now);
+					this.callbacks.onTriggerFire(trigger, {filePath});
+				} else {
+					debugTrace(`Sidekick: trigger "${trigger.name}" skipped — cooldown (${Math.round(elapsed / 1000)}s / 5s)`);
 				}
 			}
 		}
