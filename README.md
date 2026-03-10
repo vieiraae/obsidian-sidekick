@@ -8,6 +8,16 @@ Sidekick connects to GitHub Copilot or your own AI provider and gives you a full
 
 ---
 
+## Overview
+
+The Sidekick panel sits in the right sidebar alongside your notes. Pick an agent, toggle skills and tools, then chat — responses stream in with full Markdown rendering and collapsible tool-call details.
+
+![Obsidian Sidekick Screenshot](./docs/images/screenshot.png)
+
+**What you see above:** the chat tab with an active agent, model selector, reasoning toggle, and a streamed response. The session sidebar on the right lists past conversations. Context-menu actions, ghost-text autocomplete, triggers, and search all work from the same panel.
+
+---
+
 ## Quick start
 
 1. **Install** — Either:
@@ -28,14 +38,6 @@ Sidekick connects to GitHub Copilot or your own AI provider and gives you a full
 You're ready. Start chatting, or read on to unlock every feature.
 
 ---
-
-## Preview
-
-The Sidekick panel sits in the right sidebar alongside your notes. Pick an agent, toggle skills and tools, then chat — responses stream in with full Markdown rendering and collapsible tool-call details.
-
-![Obsidian Sidekick Screenshot](./docs/images/screenshot.png)
-
-**What you see above:** the chat tab with an active agent, model selector, reasoning toggle, and a streamed response. The session sidebar on the right lists past conversations. Context-menu actions, ghost-text autocomplete, triggers, and search all work from the same panel.
 
 ## Setting up the Copilot CLI
 
