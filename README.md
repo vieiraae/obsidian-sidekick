@@ -16,6 +16,9 @@ The Sidekick panel sits in the right sidebar alongside your notes. Pick an agent
 
 **What you see above:** the chat tab with an active agent, model selector, reasoning toggle, and a streamed response. The session sidebar on the right lists past conversations. Context-menu actions, ghost-text autocomplete, triggers, and search all work from the same panel.
 
+> [!CAUTION]
+> **With great power comes great responsibility.** This plugin can execute tools, run CLI commands, and modify your files on your behalf. This software is provided as open-source without any warranty or support. Use at your own risk.
+
 ---
 
 ## Quick start
@@ -36,6 +39,26 @@ The Sidekick panel sits in the right sidebar alongside your notes. Pick an agent
 4. **Open Sidekick** — Click the **brain** icon in the ribbon, or run **Open Sidekick** from the command palette.
 
 You're ready. Start chatting, or read on to unlock every feature.
+
+---
+
+## Table of contents
+
+- [Setting up the Copilot CLI](#setting-up-the-copilot-cli)
+- [The Sidekick panel](#the-sidekick-panel)
+- [Agents](#agents)
+- [Models](#models)
+- [Skills](#skills)
+- [MCP Tools (MCP servers)](#mcp-tools-mcp-servers)
+- [Browser use](#browser-use)
+- [CLI Tools](#cli-tools)
+- [Prompt templates](#prompt-templates)
+- [Triggers](#triggers)
+- [Bots](#bots)
+- [Inline edits](#inline-edits)
+- [Settings reference](#settings-reference)
+- [Using your vault with GitHub Copilot in VS Code or Copilot CLI](#using-your-vault-with-github-copilot-in-vs-code-or-copilot-cli)
+- [Feedback](#feedback)
 
 ---
 
@@ -69,28 +92,6 @@ copilot auth status   # confirm you're logged in
 - **Remote CLI** — Enter the URL of a running CLI server and a **GitHub Token**.
 
 Click **Test**.
-
----
-
-## BYOK providers
-
-Use your own API key instead of (or alongside) GitHub Copilot. Go to **Settings → Sidekick → Models** and pick a provider:
-
-| Provider | Type | Default endpoint |
-|----------|------|-----------------|
-| **GitHub (built-in)** | — | Via Copilot CLI |
-| **OpenAI** | `openai` | `https://api.openai.com/v1` |
-| **Microsoft Foundry** | `azure` | Your Azure endpoint |
-| **Anthropic** | `anthropic` | `https://api.anthropic.com` |
-| **Ollama** | `openai` | `http://localhost:11434/v1` |
-| **Microsoft Foundry Local** | `openai` | Local Foundry model server |
-| **Other OpenAI-compatible** | `openai` | Any compatible endpoint |
-
-Fill in **Base URL**, **Model name** (e.g. `gpt-5.4`, `claude-opus-4.6`, `llama3.2`), and either an **API key** or **Bearer token**. Choose the **Wire API** format (`Completions` or `Responses`). Click **Test**.
-
-The model name appears in both the chat and inline operations model dropdowns.
-
-> **Note:** Streaming is automatically disabled for **Microsoft Foundry Local**.
 
 ---
 
@@ -194,6 +195,32 @@ You can always override the agent's defaults by toggling individual items in the
 
 ---
 
+## Models
+
+With GitHub Copilot, all built-in models are available out of the box — or bring your own API key to onboard models from OpenAI, Anthropic, Ollama, Microsoft Foundry, and other OpenAI-compatible providers.
+
+### BYOK providers
+
+Use your own API key instead of (or alongside) GitHub Copilot. Go to **Settings → Sidekick → Models** and pick a provider:
+
+| Provider | Type | Default endpoint |
+|----------|------|-----------------|
+| **GitHub (built-in)** | — | Via Copilot CLI |
+| **OpenAI** | `openai` | `https://api.openai.com/v1` |
+| **Microsoft Foundry** | `azure` | Your Azure endpoint |
+| **Anthropic** | `anthropic` | `https://api.anthropic.com` |
+| **Ollama** | `openai` | `http://localhost:11434/v1` |
+| **Microsoft Foundry Local** | `openai` | Local Foundry model server |
+| **Other OpenAI-compatible** | `openai` | Any compatible endpoint |
+
+Fill in **Base URL**, **Model name** (e.g. `gpt-5.4`, `claude-opus-4.6`, `llama3.2`), and either an **API key** or **Bearer token**. Choose the **Wire API** format (`Completions` or `Responses`). Click **Test**.
+
+The model name appears in both the chat and inline operations model dropdowns.
+
+> **Note:** Streaming is automatically disabled for **Microsoft Foundry Local**.
+
+---
+
 ## Skills
 
 Skills are subfolders inside `sidekick/skills/`, each containing a `SKILL.md` file that provides domain-specific knowledge to the AI.
@@ -217,7 +244,7 @@ Browse and download additional community skills from [skills.sh](https://skills.
 
 ---
 
-## Tools (MCP servers)
+## MCP Tools (MCP servers)
 
 Configure external tool servers in `sidekick/tools/mcp.json`. Sidekick supports **stdio** (local process) and **HTTP/SSE** (remote) MCP servers.
 
@@ -403,6 +430,24 @@ Open the browser with the extension active, then ask Sidekick to browse, search,
 
 ---
 
+## CLI Tools
+
+Sidekick can invoke command-line tools directly from the chat — any CLI available on your system can be called by the AI as part of a conversation. This is useful for automating workflows that involve external services or local utilities.
+
+### Google Workspace CLI
+
+The [Google Workspace CLI](https://github.com/googleworkspace/cli) provides access to Drive, Gmail, Calendar, and every Workspace API from the command line. Once installed, the AI can search your email, create calendar events, manage Drive files, and more — all through natural language.
+
+To get the most out of it, add the companion [Google Workspace CLI skills](https://github.com/googleworkspace/cli/tree/main/skills) to your `sidekick/skills/` folder. These skills teach the AI how to use the CLI effectively, including authentication, available commands, and best practices.
+
+### Obsidian CLI
+
+The [Obsidian CLI](https://help.obsidian.md/cli) can also be invoked from the chat — an inception effect where Sidekick drives Obsidian itself. This is useful for searching tags, querying properties, listing tasks, and performing vault operations that go beyond what the AI can do with file access alone.
+
+You can add the [`obsidian-cli` skill](https://github.com/kepano/obsidian-skills) to your `sidekick/skills/` folder to enable full command reference.
+
+---
+
 ## Prompt templates
 
 Prompt templates are `*.prompt.md` files in `sidekick/prompts/`. They act as reusable slash commands.
@@ -460,88 +505,6 @@ A `cron` and/or `glob` must be configured. Trigger sessions appear in the sideba
 
 ---
 
-## Editor context menu
-
-Right-click in any note → **Sidekick** to access inline AI actions. The menu adapts based on whether you have text selected.
-
-### With text selected
-
-| Action | What happens |
-|--------|-------------|
-| **Edit** | Opens the [Edit modal](#edit-modal) with tone, format, and length controls |
-| **Rewrite** | Improves clarity and readability |
-| **Proofread** | Fixes grammar, spelling, and punctuation |
-| **Use synonyms** | Swaps words for variety |
-| **Minor revise** | Polishes without changing meaning |
-| **Major revise** | Significantly reworks structure and flow |
-| **Describe** | Explains what the text conveys |
-| **Answer** | Responds to a question in the text |
-| **Explain** | Breaks down in simple terms |
-| **Expand** | Adds detail and depth |
-| **Summarize** | Creates a concise summary |
-| **Chat with sidekick** | Opens chat with the selection as context |
-| **Autocomplete** | Toggle ghost-text autocomplete |
-
-Quick actions **replace the selected text** in-place using the **Inline operations model**.
-
-### Without a selection
-
-| Action | What happens |
-|--------|-------------|
-| **Edit the note** | Opens the Edit modal for the whole note |
-| **Structure and refine** | Restructures and improves the entire note |
-| **Chat with sidekick** | Opens the chat panel |
-| **Autocomplete** | Toggle ghost-text autocomplete |
-
----
-
-## File and folder context menu
-
-Right-click a file or folder in the vault explorer → **Sidekick**.
-
-**Markdown files:** Edit the note, Structure and refine, Chat with sidekick, Autocomplete.
-
-**Folders:** New note (AI-generated), New summary note (summarizes all notes in the folder), Chat with sidekick.
-
-**Images:** Insert extracted content below, or Replace with extracted content — uses AI to pull text from images.
-
----
-
-## Edit modal
-
-A dedicated modal for fine-grained text transformation. Open it via **Edit** in the context menu.
-
-| Control | Options |
-|---------|---------|
-| **Task** | Rewrite, Proofread, Use synonyms, Minor revise, Major revise, etc. |
-| **Tone** | Professional, Casual, Enthusiastic, Informational, Confident, Technical, Funny |
-| **Format** | Single paragraph, List, Table, Headings, Code blocks, JSON, and more |
-| **Length** | Slider — shorter to longer |
-| **Choices** | How many alternatives to generate |
-| **Edit prompt** | Free-text instruction to guide the transformation |
-
-Each control can be toggled on/off individually. Preview alternatives and pick the one you want.
-
----
-
-## Ghost-text autocomplete
-
-Get inline AI suggestions as you type — like GitHub Copilot, but for your notes.
-
-1. Enable in **Settings → Sidekick → Enable ghost-text autocomplete**.
-2. Start typing in any note. Suggestions appear as dimmed text ahead of your cursor.
-3. **Tab** to accept, **Escape** to dismiss, **double-click** to accept.
-
-Uses the **Inline operations model**. Works with all providers.
-
----
-
-## Vault scope
-
-Limit what the AI can see. Click the **folder** icon in the chat input bar to open the vault scope modal, then select specific files and folders. Only scoped content will be included as context — useful for focusing the AI on a project or topic.
-
----
-
 ## Bots
 
 Connect external messaging platforms to Sidekick so you can chat with your agents from anywhere — not just inside Obsidian. Each bot type runs as a background service, forwarding messages to the AI and sending replies back.
@@ -594,6 +557,90 @@ Click **Connect** next to the Telegram heading. The status updates to show your 
 
 ---
 
+## Inline edits
+
+### Editor context menu
+
+Right-click in any note → **Sidekick** to access inline AI actions. The menu adapts based on whether you have text selected.
+
+#### With text selected
+
+| Action | What happens |
+|--------|-------------|
+| **Edit** | Opens the [Edit modal](#edit-modal) with tone, format, and length controls |
+| **Rewrite** | Improves clarity and readability |
+| **Proofread** | Fixes grammar, spelling, and punctuation |
+| **Use synonyms** | Swaps words for variety |
+| **Minor revise** | Polishes without changing meaning |
+| **Major revise** | Significantly reworks structure and flow |
+| **Describe** | Explains what the text conveys |
+| **Answer** | Responds to a question in the text |
+| **Explain** | Breaks down in simple terms |
+| **Expand** | Adds detail and depth |
+| **Summarize** | Creates a concise summary |
+| **Chat with sidekick** | Opens chat with the selection as context |
+| **Autocomplete** | Toggle ghost-text autocomplete |
+
+Quick actions **replace the selected text** in-place using the **Inline operations model**.
+
+#### Without a selection
+
+| Action | What happens |
+|--------|-------------|
+| **Edit the note** | Opens the Edit modal for the whole note |
+| **Structure and refine** | Restructures and improves the entire note |
+| **Chat with sidekick** | Opens the chat panel |
+| **Autocomplete** | Toggle ghost-text autocomplete |
+
+---
+
+### File and folder context menu
+
+Right-click a file or folder in the vault explorer → **Sidekick**.
+
+**Markdown files:** Edit the note, Structure and refine, Chat with sidekick, Autocomplete.
+
+**Folders:** New note (AI-generated), New summary note (summarizes all notes in the folder), Chat with sidekick.
+
+**Images:** Insert extracted content below, or Replace with extracted content — uses AI to pull text from images.
+
+---
+
+### Edit modal
+
+A dedicated modal for fine-grained text transformation. Open it via **Edit** in the context menu.
+
+| Control | Options |
+|---------|---------|
+| **Task** | Rewrite, Proofread, Use synonyms, Minor revise, Major revise, etc. |
+| **Tone** | Professional, Casual, Enthusiastic, Informational, Confident, Technical, Funny |
+| **Format** | Single paragraph, List, Table, Headings, Code blocks, JSON, and more |
+| **Length** | Slider — shorter to longer |
+| **Choices** | How many alternatives to generate |
+| **Edit prompt** | Free-text instruction to guide the transformation |
+
+Each control can be toggled on/off individually. Preview alternatives and pick the one you want.
+
+---
+
+### Ghost-text autocomplete
+
+Get inline AI suggestions as you type — like GitHub Copilot, but for your notes.
+
+1. Enable in **Settings → Sidekick → Enable ghost-text autocomplete**.
+2. Start typing in any note. Suggestions appear as dimmed text ahead of your cursor.
+3. **Tab** to accept, **Escape** to dismiss, **double-click** to accept.
+
+Uses the **Inline operations model**. Works with all providers.
+
+---
+
+### Vault scope
+
+Limit what the AI can see. Click the **folder** icon in the chat input bar to open the vault scope modal, then select specific files and folders. Only scoped content will be included as context — useful for focusing the AI on a project or topic.
+
+---
+
 ## Settings reference
 
 **Settings → Sidekick**
@@ -643,7 +690,7 @@ Click **Connect** next to the Telegram heading. The status updates to show your 
 
 ---
 
-## Folder structure overview
+### Folder structure overview
 
 ```
 <YourVault>/
@@ -663,7 +710,7 @@ Click **Connect** next to the Telegram heading. The status updates to show your 
 
 ---
 
-## Using your vault with GitHub Copilot in VS Code
+## Using your vault with GitHub Copilot in VS Code or Copilot CLI
 
 Your Sidekick agents, skills, prompts, and tools can also work with GitHub Copilot in VS Code (or the Copilot CLI). The trick is creating a `.github` symbolic link that points to your `sidekick` folder — Copilot automatically picks up instructions, agents, and MCP config from `.github/`.
 
