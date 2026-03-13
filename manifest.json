@@ -1,7 +1,7 @@
 {
 	"id": "sidekick",
 	"name": "Sidekick",
-	"version": "1.1.1",
+	"version": "1.2.0",
 	"minAppVersion": "0.15.0",
 	"description": "Meet your AI sidekick — a second brain that brings agents, tools, skills, autocompletion, and smart workflows directly into your notes.",
 	"author": "Alex Vieira",

@@ -598,7 +598,7 @@ export function installSessionSidebar(ViewClass: {prototype: unknown}): void {
 	proto.restoreAgentFromSessionName = function (sessionId: string): void {
 		let sessionName = this.sessionNames[sessionId] || '';
 		// Strip session type prefix
-		sessionName = sessionName.replace(/^\[(chat|inline|trigger)\]\s*/, '');
+		sessionName = sessionName.replace(/^\[(chat|inline|trigger|search)\]\s*/, '');
 		const colonIdx = sessionName.indexOf(':');
 		if (colonIdx > 0) {
 			const agentName = sessionName.substring(0, colonIdx).trim();
@@ -649,16 +649,12 @@ export function installSessionSidebar(ViewClass: {prototype: unknown}): void {
 				systemContent: agent?.instructions || undefined,
 			});
 
-			this.currentSession = await this.plugin.copilot!.resumeSession(sessionId, {
+			const session = await this.plugin.copilot!.resumeSession(sessionId, {
 				...sessionConfig,
 			});
-			this.currentSessionId = sessionId;
-			this.configDirty = false;
-			this.registerSessionEvents();
-			this.updateToolbarLock();
 
-			// Load and render message history from SDK
-			const events = await this.currentSession.getMessages();
+			// Load message history from SDK
+			const events = await session.getMessages();
 			const renderPromises: Promise<void>[] = [];
 			for (const event of events) {
 				if (event.type === 'user.message') {
@@ -686,6 +682,13 @@ export function installSessionSidebar(ViewClass: {prototype: unknown}): void {
 			if (this.messages.length === 0) {
 				this.renderWelcome();
 			}
+
+			// Regular session — keep the handle active for interaction
+			this.currentSession = session;
+			this.currentSessionId = sessionId;
+			this.configDirty = false;
+			this.registerSessionEvents();
+			this.updateToolbarLock();
 
 			// Restore the agent that was used in this session
 			this.restoreAgentFromSessionName(sessionId);

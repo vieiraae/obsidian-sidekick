@@ -2,7 +2,7 @@ import {App, Modal, Notice, PluginSettingTab, Setting, normalizePath} from "obsi
 import SidekickPlugin from "./main";
 import type {ModelInfo, ProviderConfig} from "./copilot";
 import type {McpInputVariable} from "./types";
-import {loadMcpInputs} from "./configLoader";
+import {loadMcpInputs, loadAgents} from "./configLoader";
 
 const DEFAULT_COPILOT_LOCATION = '';
 
@@ -55,6 +55,14 @@ export interface SidekickSettings {
 	/** Search mode: 'basic' reuses session with minimal config, 'advanced' allows full agent/model/skills/tools. */
 	searchMode: 'basic' | 'advanced';
 
+	/** Telegram Bot ID (informational, not secret). */
+	telegramBotId: string;
+	/** Telegram Bot token (stored securely via local storage). */
+	telegramBotToken: string;
+	/** Comma-separated list of allowed Telegram user IDs. Empty = allow all. */
+	telegramAllowedUsers: string;
+	/** Default agent for Telegram bot sessions. */
+	telegramDefaultAgent: string;
 }
 
 /** Persisted preferences for the Edit modal form. */
@@ -103,10 +111,14 @@ export const DEFAULT_SETTINGS: SidekickSettings = {
 	reasoningEffort: '',
 	searchAgent: '',
 	searchMode: 'basic',
+	telegramBotId: '',
+	telegramBotToken: '',
+	telegramAllowedUsers: '',
+	telegramDefaultAgent: '',
 }
 
 /** Fields stored in vault-specific local storage instead of data.json. */
-export const SECURE_FIELDS: ReadonlyArray<keyof SidekickSettings> = ['githubToken', 'providerApiKey', 'providerBearerToken'];
+export const SECURE_FIELDS: ReadonlyArray<keyof SidekickSettings> = ['githubToken', 'providerApiKey', 'providerBearerToken', 'telegramBotToken'];
 
 const SECURE_PREFIX = 'sidekick-secure-';
 
@@ -210,12 +222,13 @@ export class SidekickSettingTab extends PluginSettingTab {
 		const tabBar = containerEl.createDiv({cls: 'sidekick-settings-tab-bar'});
 		const panels: Record<string, HTMLElement> = {};
 		const tabButtons: Record<string, HTMLElement> = {};
-		const tabIds = ['copilot', 'models', 'capabilities', 'tools'] as const;
+		const tabIds = ['copilot', 'models', 'capabilities', 'tools', 'bots'] as const;
 		const tabLabels: Record<string, string> = {
 			copilot: 'Copilot',
 			models: 'Models',
 			capabilities: 'Capabilities',
 			tools: 'Tools',
+			bots: 'Bots',
 		};
 
 		const switchSettingsTab = (id: string) => {
@@ -734,8 +747,147 @@ export class SidekickSettingTab extends PluginSettingTab {
 		};
 		void renderMcpInputs();
 
+		// ══════════════════════════════════════════════════════════
+		// TAB 5: Bots
+		// ══════════════════════════════════════════════════════════
+		const botsPanel = panels['bots']!;
+		this.renderBotsPanel(botsPanel);
+
 		// Auto-refresh models when opening settings
 		void refreshModels();
+	}
+
+	/** Render the Bots settings tab (Telegram section). */
+	private renderBotsPanel(panel: HTMLElement): void {
+		// ── Telegram section ──────────────────────────────────────
+		// Heading with connect/disconnect button on the right and status after label
+		const headingSetting = new Setting(panel)
+			.setName('Telegram')
+			.setHeading();
+
+		const statusEl = headingSetting.nameEl.createSpan({cls: 'sidekick-bot-status'});
+
+		const updateStatusDisplay = (status: string, isError = false) => {
+			statusEl.empty();
+			if (status) {
+				statusEl.createSpan({
+					text: ` — ${status}`,
+					cls: isError ? 'sidekick-bot-status-error' : 'sidekick-bot-status-ok',
+				});
+			}
+		};
+
+		const telegram = this.plugin.telegramBot;
+		if (telegram?.isConnected()) {
+			updateStatusDisplay(`Connected as @${telegram.botUsername}`);
+		}
+
+		const updateConnectButton = () => {
+			headingSetting.controlEl.empty();
+			const isConnected = this.plugin.telegramBot?.isConnected() ?? false;
+
+			if (isConnected) {
+				updateStatusDisplay(`Connected as @${this.plugin.telegramBot!.botUsername}`);
+				headingSetting.addButton(button => button
+					.setButtonText('Disconnect')
+					.setWarning()
+					.onClick(async () => {
+						button.setDisabled(true);
+						button.setButtonText('Disconnecting…');
+						try {
+							await this.plugin.disconnectTelegram();
+							updateStatusDisplay('');
+						} catch (e) {
+							updateStatusDisplay(`Disconnect error: ${String(e)}`, true);
+						} finally {
+							updateConnectButton();
+						}
+					}));
+			} else {
+				headingSetting.addButton(button => button
+					.setButtonText('Connect')
+					.setCta()
+					.onClick(async () => {
+						const token = this.plugin.settings.telegramBotToken;
+						if (!token) {
+							new Notice('Please enter a bot token first.');
+							return;
+						}
+						button.setDisabled(true);
+						button.setButtonText('Connecting…');
+						try {
+							await this.plugin.connectTelegram();
+							updateStatusDisplay(`Connected as @${this.plugin.telegramBot!.botUsername}`);
+						} catch (e) {
+							updateStatusDisplay(`Connection failed: ${String(e)}`, true);
+						} finally {
+							updateConnectButton();
+						}
+					}));
+			}
+		};
+
+		updateConnectButton();
+
+		new Setting(panel)
+			.setName('Bot ID')
+			.setDesc('The numeric bot ID (e.g. yourunique_bot).')
+			.addText(text => text
+				.setPlaceholder('_bot')
+				.setValue(this.plugin.settings.telegramBotId)
+				.onChange(async (value) => {
+					this.plugin.settings.telegramBotId = value.trim();
+					await this.plugin.saveSettings();
+				}));
+
+		new Setting(panel)
+			.setName('Bot token')
+			.setDesc('The bot token (stored securely).')
+			.addText(text => {
+				text.inputEl.type = 'password';
+				text.inputEl.autocomplete = 'off';
+				text.setPlaceholder('')
+					.setValue(this.plugin.settings.telegramBotToken)
+					.onChange((value) => {
+						updateSecureField(this.app, this.plugin, 'telegramBotToken', value.trim());
+					});
+			});
+
+		new Setting(panel)
+			.setName('Allowed users')
+			.setDesc('Comma-separated user ids that can use the bot (required).')
+			.addText(text => text
+				.setPlaceholder('123456789, 987654321')
+				.setValue(this.plugin.settings.telegramAllowedUsers)
+				.onChange(async (value) => {
+					this.plugin.settings.telegramAllowedUsers = value;
+					await this.plugin.saveSettings();
+				}));
+
+		// Default agent dropdown — populated from vault agents
+		const agentSetting = new Setting(panel)
+			.setName('Default agent')
+			.setDesc('The agent used to respond to incoming messages.');
+
+		agentSetting.addDropdown(dropdown => {
+			dropdown.addOption('', 'Auto');
+			// Load agents asynchronously and populate
+			void loadAgents(this.app, getAgentsFolder(this.plugin.settings)).then(agents => {
+				for (const agent of agents) {
+					dropdown.addOption(agent.name, agent.name);
+				}
+				if (this.plugin.settings.telegramDefaultAgent) {
+					dropdown.setValue(this.plugin.settings.telegramDefaultAgent);
+				}
+			}).catch(() => { /* ignore */ });
+			if (this.plugin.settings.telegramDefaultAgent) {
+				dropdown.setValue(this.plugin.settings.telegramDefaultAgent);
+			}
+			dropdown.onChange(async (value) => {
+				this.plugin.settings.telegramDefaultAgent = value;
+				await this.plugin.saveSettings();
+			});
+		});
 	}
 }
 

@@ -1968,4 +1968,19 @@ body.sidekick-no-select {
 	field-sizing: content;
 }
 
+/* ── Bot settings status ──────────────────────────────────────── */
+
+.sidekick-bot-status {
+	font-size: var(--font-ui-small);
+	font-weight: normal;
+}
+
+.sidekick-bot-status-ok {
+	color: var(--text-success);
+}
+
+.sidekick-bot-status-error {
+	color: var(--text-error);
+}
+
 

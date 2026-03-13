@@ -4,10 +4,12 @@ import {CopilotService} from "./copilot";
 import {SidekickView, SIDEKICK_VIEW_TYPE} from "./sidekickView";
 import {registerEditorMenu, registerFileMenu} from './editor/editorMenu';
 import {buildGhostTextExtension} from './editor/ghostText';
+import {TelegramBotService} from './bots';
 
 export default class SidekickPlugin extends Plugin {
 	settings!: SidekickSettings;
 	copilot: CopilotService | null = null;
+	telegramBot: TelegramBotService | null = null;
 
 	async onload() {
 		await this.loadSettings();
@@ -71,6 +73,24 @@ export default class SidekickPlugin extends Plugin {
 	onunload() {
 		if (this.copilot) {
 			void this.copilot.stop();
+		}
+		if (this.telegramBot) {
+			void this.telegramBot.disconnect();
+		}
+	}
+
+	async connectTelegram(): Promise<void> {
+		const token = this.settings.telegramBotToken;
+		if (!token) throw new Error('No bot token configured.');
+		if (!this.telegramBot) {
+			this.telegramBot = new TelegramBotService(this);
+		}
+		await this.telegramBot.connect(token);
+	}
+
+	async disconnectTelegram(): Promise<void> {
+		if (this.telegramBot) {
+			await this.telegramBot.disconnect();
 		}
 	}
 

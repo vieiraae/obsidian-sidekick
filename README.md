@@ -542,6 +542,58 @@ Limit what the AI can see. Click the **folder** icon in the chat input bar to op
 
 ---
 
+## Bots
+
+Connect external messaging platforms to Sidekick so you can chat with your agents from anywhere — not just inside Obsidian. Each bot type runs as a background service, forwarding messages to the AI and sending replies back.
+
+### Telegram
+
+Turn a Telegram bot into a front-end for your Sidekick agents. Messages you send in Telegram are processed by Sidekick using your configured agent, model, skills, and MCP tools — then the response is sent back to the chat.
+
+#### 1. Create a Telegram bot
+
+1. Open Telegram and message [@BotFather](https://t.me/BotFather).
+2. Send `/newbot` and follow the prompts to choose a name and username.
+3. BotFather gives you a **bot token** — copy it.
+
+#### 2. Configure in Sidekick
+
+Go to **Settings → Sidekick → Bots**:
+
+| Setting | Description |
+|---------|-------------|
+| **Bot ID** | Your bot's username (e.g. `myassistant_bot`) — informational only |
+| **Bot token** | The token from BotFather (stored securely) |
+| **Allowed users** | Comma-separated Telegram user IDs (required — see below) |
+| **Default agent** | Which agent responds to incoming messages |
+
+#### Finding your Telegram user ID
+
+The **Allowed users** field requires numeric Telegram user IDs (not usernames). To find yours:
+
+1. Message [@userinfobot](https://t.me/userinfobot) on Telegram — it replies with your user ID.
+2. Alternatively, message [@RawDataBot](https://t.me/RawDataBot) and look for `"id"` in the `"from"` section.
+
+Add each authorized user’s ID separated by commas, e.g. `123456789, 987654321`. The bot silently ignores messages from anyone not in the list.
+
+#### 3. Connect
+
+Click **Connect** next to the Telegram heading. The status updates to show your bot's username. Click **Disconnect** to stop.
+
+#### How it works
+
+- Sidekick uses **long-polling** to receive messages — no webhooks or public URLs needed.
+- Each Telegram chat (or forum topic) gets its own conversation session with full history.
+- File attachments (photos, documents, audio, video) are downloaded and passed to the AI.
+- The bot supports `/new` to reset the session and `/help` for usage info.
+- All configured MCP tools, skills, and the default agent's system prompt are available.
+- MCP input variables (API keys, etc.) are resolved from your stored values — configure them in **Settings → Sidekick → MCP input variables** before connecting.
+- Use the Sessions App from [VS Code Insiders](https://code.visualstudio.com/insiders/) to review conversation history and see which tools were invoked.
+
+> **Note:** The bot runs only while Obsidian is open and the connection is active.
+
+---
+
 ## Settings reference
 
 **Settings → Sidekick**
@@ -578,6 +630,16 @@ Limit what the AI can see. Click the **folder** icon in the chat input bar to op
 | **Reasoning effort** | *(unset)* | Low / Medium / High / XHigh — when supported by the model |
 | **Search mode** | Basic | `Basic` (quick) or `Advanced` (full agent/model/skills/tools config) |
 | **Search agent** | *(empty)* | Default agent for the Search tab |
+
+### Bots
+
+| Setting | Default | Description |
+|---------|---------|-------------|
+| **Telegram → Bot ID** | *(empty)* | Bot username (informational) |
+| **Telegram → Bot token** | *(empty)* | BotFather token (stored securely) |
+| **Telegram → Allowed users** | *(empty)* | Comma-separated user IDs (required) |
+| **Telegram → Default agent** | *(none)* | Agent used for bot responses |
+| **Telegram → Connect / Disconnect** | Disconnected | Start or stop the Telegram bot |
 
 ---
 
