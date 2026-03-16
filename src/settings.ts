@@ -791,11 +791,11 @@ export class SidekickSettingTab extends PluginSettingTab {
 				headingSetting.addButton(button => button
 					.setButtonText('Disconnect')
 					.setWarning()
-					.onClick(async () => {
+					.onClick(() => {
 						button.setDisabled(true);
 						button.setButtonText('Disconnecting…');
 						try {
-							await this.plugin.disconnectTelegram();
+							this.plugin.disconnectTelegram();
 							updateStatusDisplay('');
 						} catch (e) {
 							updateStatusDisplay(`Disconnect error: ${String(e)}`, true);
@@ -831,7 +831,7 @@ export class SidekickSettingTab extends PluginSettingTab {
 
 		new Setting(panel)
 			.setName('Bot identifier')
-			.setDesc('The numeric bot id (e.g. yourunique_bot).')
+			.setDesc('The unique identifier for your bot.')
 			.addText(text => text
 				.setPlaceholder('_bot')
 				.setValue(this.plugin.settings.telegramBotId)

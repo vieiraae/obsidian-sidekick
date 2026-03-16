@@ -77,7 +77,7 @@ export class TelegramBotService {
 	/** Connect to Telegram and start polling. */
 	async connect(botToken: string): Promise<void> {
 		if (this.polling) {
-			await this.disconnect();
+			this.disconnect();
 		}
 		this.setStatus('connecting');
 

@@ -88,9 +88,9 @@ export default class SidekickPlugin extends Plugin {
 		await this.telegramBot.connect(token);
 	}
 
-	async disconnectTelegram(): Promise<void> {
+	disconnectTelegram(): void {
 		if (this.telegramBot) {
-			await this.telegramBot.disconnect();
+			this.telegramBot.disconnect();
 		}
 	}
 
