@@ -71,6 +71,13 @@ export class SidekickView extends ItemView {
 	lastFullRenderLen = 0;
 	fullRenderTimer: ReturnType<typeof setTimeout> | null = null;
 
+	// ── Reasoning streaming state ──────────────────────────────
+	streamingReasoning = '';
+	reasoningEl: HTMLDetailsElement | null = null;
+	reasoningBodyEl: HTMLElement | null = null;
+	reasoningComplete = false;
+	fullReasoningRenderTimer: ReturnType<typeof setTimeout> | null = null;
+
 	// ── Turn-level metadata ────────────────────────────────────
 	turnStartTime = 0;
 	turnToolsUsed: string[] = [];
@@ -654,7 +661,15 @@ export class SidekickView extends ItemView {
 					this.turnStartTime = Date.now();
 				}
 			}),
+			session.on('assistant.reasoning_delta', (event) => {
+				this.appendReasoningDelta(event.data.deltaContent);
+			}),
+			session.on('assistant.reasoning', () => {
+				this.finalizeReasoning();
+			}),
 			session.on('assistant.message_delta', (event) => {
+				// Collapse any open reasoning block before the answer starts
+				if (!this.reasoningComplete) this.finalizeReasoning();
 				this.appendDelta(event.data.deltaContent);
 			}),
 			session.on('assistant.message', () => {
