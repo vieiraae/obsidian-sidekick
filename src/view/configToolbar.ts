@@ -53,8 +53,15 @@ export function installConfigToolbar(ViewClass: { prototype: unknown }): void {
 		this.modelIconEl.addEventListener('click', (e) => { e.stopPropagation(); this.openReasoningMenu(e); });
 		this.modelSelect = modelGroup.createEl('select', {cls: 'sidekick-select sidekick-model-select'});
 		this.modelSelect.addEventListener('change', () => {
-			this.selectedModel = this.modelSelect.value;
-			this.configDirty = true;
+			const newModel = this.modelSelect.value;
+			this.selectedModel = newModel;
+			if (this.currentSession && !this.configDirty) {
+				// Mid-session model switch via setModel()
+				const effort = this.plugin.settings.reasoningEffort;
+				void this.currentSession.setModel(newModel, effort ? {reasoningEffort: effort as ReasoningEffort} : undefined);
+			} else {
+				this.configDirty = true;
+			}
 			this.updateReasoningBadge();
 		});
 
@@ -109,7 +116,6 @@ export function installConfigToolbar(ViewClass: { prototype: unknown }): void {
 	};
 
 	proto.openReasoningMenu = function(e: MouseEvent): void {
-		if (this.currentSession && !this.configDirty) return;
 		const model = this.getSelectedModelInfo();
 		const supported = model?.supportedReasoningEfforts;
 		if (!model?.capabilities?.supports?.reasoningEffort || !supported || supported.length === 0) {
@@ -127,9 +133,18 @@ export function installConfigToolbar(ViewClass: { prototype: unknown }): void {
 					.setChecked(level === current)
 					.onClick(() => {
 						// Toggle off if already selected
-						this.plugin.settings.reasoningEffort = level === current ? '' : level;
+						const newEffort = level === current ? '' : level;
+						this.plugin.settings.reasoningEffort = newEffort;
 						void this.plugin.saveSettings();
-						this.configDirty = true;
+						if (this.currentSession && !this.configDirty) {
+							// Mid-session reasoning change via setModel()
+							void this.currentSession.setModel(
+								this.selectedModel,
+								newEffort ? {reasoningEffort: newEffort as ReasoningEffort} : undefined,
+							);
+						} else {
+							this.configDirty = true;
+						}
 						this.updateReasoningBadge();
 					});
 			});

@@ -27,7 +27,11 @@ import {debugTrace} from './debug';
 import {ToolApprovalModal} from './modals/toolApprovalModal';
 import {UserInputModal} from './modals/userInputModal';
 import type {UserInputRequest} from './modals/userInputModal';
+import {ElicitationModal} from './modals/elicitationModal';
 import type {BackgroundSession} from './view/types';
+
+/** Frozen sentinel — when earlyEventBuffer points here, onEvent stops buffering. */
+const EMPTY_EVENT_BUFFER: readonly import('./copilot').SessionEvent[] = Object.freeze([]);
 import {buildPrompt, buildSdkAttachments, mapMcpServers} from './view/sessionConfig';
 
 export const SIDEKICK_VIEW_TYPE = 'sidekick-view';
@@ -163,6 +167,7 @@ export class SidekickView extends ItemView {
 	splitterEl!: HTMLElement;
 
 	eventUnsubscribers: (() => void)[] = [];
+	earlyEventBuffer: import('./copilot').SessionEvent[] = [];
 
 	constructor(leaf: WorkspaceLeaf, plugin: SidekickPlugin) {
 		super(leaf);
@@ -618,14 +623,24 @@ export class SidekickView extends ItemView {
 			this.currentSession = null;
 		}
 
-		const agent = this.agents.find(a => a.name === this.selectedAgent);
 		const sessionConfig = this.buildSessionConfig({
-			model: this.resolveModelForAgent(agent, this.selectedModel || undefined),
+			model: this.selectedModel || undefined,
 			selectedAgentName: this.selectedAgent || undefined,
 		});
 
 		this.currentSession = await this.plugin.copilot!.createSession(sessionConfig);
 		this.currentSessionId = this.currentSession.sessionId;
+
+		// Explicitly select the agent via RPC — the `agent` field in SessionConfig
+		// should do this, but some CLI versions require the explicit call.
+		if (sessionConfig.agent) {
+			try {
+				await this.currentSession.rpc.agent.select({name: sessionConfig.agent});
+			} catch (e) {
+				console.warn('[sidekick] agent.select failed:', e);
+			}
+		}
+
 		this.configDirty = false;
 		this.registerSessionEvents();
 		this.updateToolbarLock();
@@ -643,26 +658,24 @@ export class SidekickView extends ItemView {
 		this.renderSessionList();
 	}
 
-	registerSessionEvents(): void {
-		if (!this.currentSession) return;
-		const session = this.currentSession;
-
-		this.eventUnsubscribers.push(
-			session.on('assistant.turn_start', () => {
-				// Only record start time on the first turn of a streaming response
+	/** Central event dispatcher — used by both onEvent (early) and typed handlers. */
+	handleSessionEvent(event: import('./copilot').SessionEvent): void {
+		const type = event.type;
+		const data = event.data as Record<string, unknown>;
+		switch (type) {
+			case 'assistant.turn_start':
 				if (this.turnStartTime === 0) {
 					this.turnStartTime = Date.now();
 				}
-			}),
-			session.on('assistant.message_delta', (event) => {
-				this.appendDelta(event.data.deltaContent);
-			}),
-			session.on('assistant.message', () => {
+				break;
+			case 'assistant.message_delta':
+				this.appendDelta(data.deltaContent as string);
+				break;
+			case 'assistant.message':
 				// Content already accumulated via deltas
-			}),
-			session.on('assistant.usage', (event) => {
-				const d = event.data;
-				// Accumulate usage across multiple calls in a turn
+				break;
+			case 'assistant.usage': {
+				const d = data as {inputTokens?: number; outputTokens?: number; cacheReadTokens?: number; cacheWriteTokens?: number; model?: string};
 				if (!this.turnUsage) {
 					this.turnUsage = {
 						inputTokens: d.inputTokens ?? 0,
@@ -678,35 +691,68 @@ export class SidekickView extends ItemView {
 					this.turnUsage.cacheWriteTokens += d.cacheWriteTokens ?? 0;
 					if (d.model) this.turnUsage.model = d.model;
 				}
-			}),
-			session.on('session.idle', () => {
+				break;
+			}
+			case 'session.idle':
 				this.finalizeStreamingMessage();
-			}),
-			session.on('session.error', (event) => {
+				break;
+			case 'session.error':
 				this.finalizeStreamingMessage();
-				this.addInfoMessage(`Error: ${event.data.message}`);
-			}),
-			session.on('tool.execution_start', (event) => {
-				this.turnToolsUsed.push(event.data.toolName);
-				this.addToolCallBlock(event.data.toolCallId, event.data.toolName, event.data.arguments);
-			}),
-			session.on('tool.execution_complete', (event) => {
+				this.addInfoMessage(`Error: ${(data as {message: string}).message}`);
+				break;
+			case 'tool.execution_start':
+				this.turnToolsUsed.push(data.toolName as string);
+				this.addToolCallBlock(data.toolCallId as string, data.toolName as string, data.arguments as string);
+				break;
+			case 'tool.execution_complete':
 				this.completeToolCallBlock(
-					event.data.toolCallId,
-					event.data.success,
-					event.data.result as {content?: string; detailedContent?: string} | undefined,
-					event.data.error as {message: string} | undefined,
+					data.toolCallId as string,
+					data.success as boolean,
+					data.result as {content?: string; detailedContent?: string} | undefined,
+					data.error as {message: string} | undefined,
 				);
-			}),
-			session.on('skill.invoked', (event) => {
-				this.turnSkillsUsed.push(event.data.name);
-			}),
+				break;
+			case 'skill.invoked':
+				this.turnSkillsUsed.push(data.name as string);
+				break;
+		}
+	}
+
+	registerSessionEvents(): void {
+		if (!this.currentSession) return;
+		const session = this.currentSession;
+
+		// Replay any events that arrived via onEvent before typed handlers were registered
+		const buffered = this.earlyEventBuffer;
+		this.earlyEventBuffer = EMPTY_EVENT_BUFFER as import('./copilot').SessionEvent[];
+		for (const event of buffered) {
+			this.handleSessionEvent(event);
+		}
+
+		// Register typed handlers for future events. The onEvent handler in
+		// buildSessionConfig now delegates directly to handleSessionEvent,
+		// so events arriving after this point are handled twice only if both
+		// fire — but since onEvent fires for *all* events and the typed
+		// handlers are more specific, they complement each other. We keep
+		// the typed handlers for type-safety and because resumeSession paths
+		// don't go through buildSessionConfig's onEvent.
+		this.eventUnsubscribers.push(
+			session.on('assistant.turn_start', (event) => { this.handleSessionEvent(event); }),
+			session.on('assistant.message_delta', (event) => { this.handleSessionEvent(event); }),
+			session.on('assistant.message', (event) => { this.handleSessionEvent(event); }),
+			session.on('assistant.usage', (event) => { this.handleSessionEvent(event); }),
+			session.on('session.idle', (event) => { this.handleSessionEvent(event); }),
+			session.on('session.error', (event) => { this.handleSessionEvent(event); }),
+			session.on('tool.execution_start', (event) => { this.handleSessionEvent(event); }),
+			session.on('tool.execution_complete', (event) => { this.handleSessionEvent(event); }),
+			session.on('skill.invoked', (event) => { this.handleSessionEvent(event); }),
 		);
 	}
 
 	unsubscribeEvents(): void {
 		for (const unsub of this.eventUnsubscribers) unsub();
 		this.eventUnsubscribers = [];
+		this.earlyEventBuffer = [];
 	}
 
 	async disconnectSession(): Promise<void> {
@@ -785,11 +831,9 @@ export class SidekickView extends ItemView {
 			.filter(s => !this.enabledSkills.has(s.name))
 			.map(s => s.name);
 
-		// Custom agents — only the selected agent, or all if none selected
-		const agentPool = opts.selectedAgentName
-			? this.agents.filter(a => a.name === opts.selectedAgentName)
-			: this.agents;
-		const customAgents: CustomAgentConfig[] = agentPool.map(a => ({
+		// Custom agents — register all agents so the session knows about them;
+		// the `agent` field in the returned config selects the active one.
+		const customAgents: CustomAgentConfig[] = this.agents.map(a => ({
 			name: a.name,
 			displayName: a.name,
 			description: a.description || undefined,
@@ -811,6 +855,13 @@ export class SidekickView extends ItemView {
 		// User input handler — shows a modal when the agent invokes ask_user
 		const userInputHandler = (request: UserInputRequest) => {
 			const modal = new UserInputModal(this.app, request);
+			modal.open();
+			return modal.promise;
+		};
+
+		// Elicitation handler — shows a form modal for structured input requests
+		const elicitationHandler: import('./copilot').ElicitationHandler = (context) => {
+			const modal = new ElicitationModal(this.app, context);
 			modal.open();
 			return modal.promise;
 		};
@@ -843,14 +894,23 @@ export class SidekickView extends ItemView {
 			streaming: providerPreset !== 'foundry-local',
 			onPermissionRequest: permissionHandler,
 			onUserInputRequest: userInputHandler,
+			onElicitationRequest: elicitationHandler,
 			workingDirectory: this.getWorkingDirectory(),
 			...(reasoningEffort !== '' ? {reasoningEffort: reasoningEffort as ReasoningEffort} : {}),
 			...(provider ? {provider} : {}),
 			...(Object.keys(mcpServers).length > 0 ? {mcpServers} : {}),
 			...(customAgents.length > 0 ? {customAgents} : {}),
+			...(opts.selectedAgentName ? {agent: opts.selectedAgentName} : {}),
 			...(skillDirs.length > 0 ? {skillDirectories: skillDirs} : {}),
 			...(disabledSkills.length > 0 ? {disabledSkills} : {}),
 			...(opts.systemContent ? {systemMessage: {mode: 'append' as const, content: opts.systemContent}} : {}),
+			onEvent: (event: import('./copilot').SessionEvent) => {
+				// Buffer early events until registerSessionEvents() drains
+				// and sets earlyEventBuffer to a frozen empty array.
+				if (this.earlyEventBuffer !== EMPTY_EVENT_BUFFER) {
+					this.earlyEventBuffer.push(event);
+				}
+			},
 		};
 	}
 

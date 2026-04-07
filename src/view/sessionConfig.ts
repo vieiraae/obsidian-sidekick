@@ -115,6 +115,13 @@ export function buildSdkAttachments(params: {
 				path: filePath,
 				displayName: att.name,
 			});
+		} else if (att.type === 'blob' && att.data && att.mimeType) {
+			result.push({
+				type: 'blob',
+				data: att.data,
+				mimeType: att.mimeType,
+				displayName: att.name,
+			});
 		} else if (att.type === 'selection' && att.path) {
 			// Workaround: send as 'file' instead of 'selection' because the Copilot CLI
 			// server's session.send handler maps all attachments to {type, path, displayName},
