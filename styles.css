@@ -746,6 +746,87 @@
 	margin-top: 8px;
 }
 
+/* ── Elicitation modal (structured input) ─────────────────────── */
+
+.sidekick-elicitation-modal h3 {
+	margin-top: 0;
+	margin-bottom: 12px;
+}
+
+.sidekick-elicitation-message {
+	font-size: var(--font-ui-medium);
+	margin-bottom: 16px;
+	line-height: 1.5;
+}
+
+.sidekick-elicitation-form {
+	display: flex;
+	flex-direction: column;
+	gap: 14px;
+	margin-bottom: 16px;
+}
+
+.sidekick-elicitation-field {
+	display: flex;
+	flex-direction: column;
+	gap: 4px;
+}
+
+.sidekick-elicitation-label {
+	font-weight: var(--font-semibold);
+	font-size: var(--font-ui-small);
+}
+
+.sidekick-elicitation-description {
+	font-size: var(--font-ui-smaller);
+	color: var(--text-muted);
+	margin-bottom: 2px;
+}
+
+.sidekick-elicitation-input {
+	width: 100%;
+	padding: 6px 8px;
+	font-family: var(--font-interface);
+	font-size: var(--font-ui-small);
+	border: 1px solid var(--background-modifier-border);
+	border-radius: var(--radius-s);
+	background: var(--background-primary);
+	color: var(--text-normal);
+}
+
+.sidekick-elicitation-input:focus {
+	border-color: var(--interactive-accent);
+	outline: none;
+}
+
+.sidekick-elicitation-select {
+	width: 100%;
+}
+
+.sidekick-elicitation-checklist {
+	display: flex;
+	flex-direction: column;
+	gap: 6px;
+}
+
+.sidekick-elicitation-check-row {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	font-size: var(--font-ui-small);
+}
+
+.sidekick-elicitation-url {
+	margin-bottom: 16px;
+}
+
+.sidekick-elicitation-buttons {
+	display: flex;
+	justify-content: flex-end;
+	gap: 8px;
+	margin-top: 8px;
+}
+
 /* ── Message metadata footer ──────────────────────────────────── */
 
 .sidekick-msg-metadata {

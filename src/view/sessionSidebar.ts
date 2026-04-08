@@ -646,12 +646,22 @@ export function installSessionSidebar(ViewClass: {prototype: unknown}): void {
 			const agent = this.agents.find(a => a.name === this.selectedAgent);
 			const sessionConfig = this.buildSessionConfig({
 				model: this.selectedModel || undefined,
+				selectedAgentName: this.selectedAgent || undefined,
 				systemContent: agent?.instructions || undefined,
 			});
 
 			const session = await this.plugin.copilot!.resumeSession(sessionId, {
 				...sessionConfig,
 			});
+
+			// Explicitly select the agent via RPC after resume
+			if (sessionConfig.agent) {
+				try {
+					await session.rpc.agent.select({name: sessionConfig.agent});
+				} catch (e) {
+					console.warn('[sidekick] agent.select on resume failed:', e);
+				}
+			}
 
 			// Load message history from SDK
 			const events = await session.getMessages();

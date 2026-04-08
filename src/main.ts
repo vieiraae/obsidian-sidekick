@@ -54,11 +54,17 @@ export default class SidekickPlugin extends Plugin {
 			this.copilot = null;
 		}
 		const s = this.settings;
+
+		// BYOK model listing: when a non-GitHub provider is configured, fetch
+		// models from the provider endpoint so client.listModels() returns them.
+		const onListModels = this.buildOnListModels();
+
 		if (s.copilotType === 'remote') {
 			const url = s.cliUrl.trim();
 			this.copilot = new CopilotService({
 				cliUrl: url || undefined,
 				githubToken: s.githubToken || undefined,
+				...(onListModels ? {onListModels} : {}),
 			});
 		} else {
 			const loc = s.copilotLocation.trim();
@@ -66,8 +72,61 @@ export default class SidekickPlugin extends Plugin {
 				cliPath: loc.length > 0 ? loc : undefined,
 				useLoggedInUser: s.useLoggedInUser,
 				githubToken: !s.useLoggedInUser && s.githubToken ? s.githubToken : undefined,
+				...(onListModels ? {onListModels} : {}),
 			});
 		}
+	}
+
+	/**
+	 * Build an onListModels callback for BYOK providers that fetches models
+	 * from the provider's endpoint. Returns undefined for GitHub preset.
+	 */
+	private buildOnListModels(): (() => Promise<import('./copilot').ModelInfo[]>) | undefined {
+		const s = this.settings;
+		if (s.providerPreset === 'github' || !s.providerBaseUrl) return undefined;
+
+		const baseUrl = s.providerBaseUrl.replace(/\/$/, '');
+		const apiKey = s.providerApiKey;
+		const bearerToken = s.providerBearerToken;
+		const preset = s.providerPreset;
+
+		return async (): Promise<import('./copilot').ModelInfo[]> => {
+			try {
+				const headers: Record<string, string> = {'Content-Type': 'application/json'};
+				if (apiKey) headers['Authorization'] = `Bearer ${apiKey}`;
+				else if (bearerToken) headers['Authorization'] = `Bearer ${bearerToken}`;
+
+				// Ollama uses /api/tags, OpenAI-compatible use /v1/models
+				const url = preset === 'ollama'
+					? `${baseUrl}/api/tags`
+					: `${baseUrl}/v1/models`;
+
+				const resp = await fetch(url, {headers});
+				if (!resp.ok) return [];
+				const json = await resp.json() as Record<string, unknown>;
+
+				if (preset === 'ollama') {
+					// Ollama format: { models: [{ name, ... }] }
+					const models = (json.models ?? []) as Array<{name: string; modified_at?: string}>;
+					return models.map(m => ({
+						id: m.name,
+						name: m.name,
+						version: m.name,
+						capabilities: {supports: {vision: false, reasoningEffort: false}, limits: {max_context_window_tokens: 0}},
+					})) as import('./copilot').ModelInfo[];
+				}
+				// OpenAI-compatible format: { data: [{ id, ... }] }
+				const data = (json.data ?? []) as Array<{id: string; name?: string}>;
+				return data.map(m => ({
+					id: m.id,
+					name: m.name ?? m.id,
+					version: m.id,
+					capabilities: {supports: {vision: false, reasoningEffort: false}, limits: {max_context_window_tokens: 0}},
+				})) as import('./copilot').ModelInfo[];
+			} catch {
+				return [];
+			}
+		};
 	}
 
 	onunload() {

@@ -17,6 +17,12 @@ import type {
 	PermissionRequest,
 	PermissionRequestResult,
 	PermissionHandler,
+	ElicitationHandler,
+	ElicitationContext,
+	ElicitationResult,
+	ElicitationSchema,
+	ElicitationSchemaField,
+	ElicitationFieldValue,
 } from '@github/copilot-sdk';
 import type {ProviderConfig, UserInputHandler, UserInputRequest, UserInputResponse, ReasoningEffort} from '@github/copilot-sdk/dist/types';
 
@@ -38,16 +44,48 @@ async function resolveDefaultCliPath(): Promise<string> {
 	// Lazy-load Node.js builtins so the module can be imported on mobile
 	const path = nodeRequire?.('node:path') as typeof import('node:path') ?? await import('node:path');
 	const fs = nodeRequire?.('node:fs/promises') as typeof import('node:fs/promises') ?? await import('node:fs/promises');
+
+	// On Windows, look for the native binary in the global npm prefix first
+	const searchRoots: string[] = [];
+	if (process.platform === 'win32') {
+		const appData = process.env['APPDATA'];
+		if (appData) {
+			searchRoots.push(path.join(appData, 'npm', 'node_modules'));
+		}
+	}
+	searchRoots.push(path.join(__dirname, 'node_modules'));
+
 	const nativePkg = `@github/copilot-${process.platform}-${process.arch}`;
 	const ext = process.platform === 'win32' ? '.exe' : '';
-	const nativeBin = path.join(__dirname, 'node_modules', nativePkg, `copilot${ext}`);
-	try {
-		await fs.access(nativeBin);
-		return nativeBin;
-	} catch {
-		// Fallback to the JS CLI entry point
-		return path.join(__dirname, 'node_modules', '@github', 'copilot', 'index.js');
+
+	// Search paths: the native binary may be a direct dependency or nested
+	// under @github/copilot/node_modules (e.g. global npm installs on Windows).
+	const candidates: string[] = [];
+	for (const root of searchRoots) {
+		candidates.push(path.join(root, nativePkg, `copilot${ext}`));
+		candidates.push(path.join(root, '@github', 'copilot', 'node_modules', nativePkg, `copilot${ext}`));
 	}
+
+	// On Windows, also check the WinGet links directory
+	if (process.platform === 'win32') {
+		const localAppData = process.env['LOCALAPPDATA'];
+		if (localAppData) {
+			candidates.push(path.join(localAppData, 'Microsoft', 'WinGet', 'Links', 'copilot.exe'));
+		}
+	}
+
+	for (const nativeBin of candidates) {
+		try {
+			await fs.access(nativeBin);
+			return nativeBin;
+		} catch {
+			// not found in this root, continue
+		}
+	}
+
+	// Fallback to the JS CLI entry point
+	const fallback = path.join(__dirname, 'node_modules', '@github', 'copilot', 'index.js');
+	return fallback;
 }
 
 /**
@@ -89,17 +127,20 @@ export class CopilotService {
 	private readonly cliUrl: string | undefined;
 	private readonly githubToken: string | undefined;
 	private readonly useLoggedInUser: boolean | undefined;
+	private readonly onListModels: (() => Promise<ModelInfo[]> | ModelInfo[]) | undefined;
 
 	constructor(opts?: {
 		cliPath?: string;
 		cliUrl?: string;
 		githubToken?: string;
 		useLoggedInUser?: boolean;
+		onListModels?: () => Promise<ModelInfo[]> | ModelInfo[];
 	}) {
 		this.cliPath = opts?.cliPath;
 		this.cliUrl = opts?.cliUrl;
 		this.githubToken = opts?.githubToken;
 		this.useLoggedInUser = opts?.useLoggedInUser;
+		this.onListModels = opts?.onListModels;
 	}
 
 	private async createClient(): Promise<CopilotClient> {
@@ -108,6 +149,7 @@ export class CopilotService {
 			return new CopilotClient({
 				cliUrl: this.cliUrl,
 				...(this.githubToken ? {githubToken: this.githubToken} : {}),
+				...(this.onListModels ? {onListModels: this.onListModels} : {}),
 			});
 		}
 		// Local mode — spawn CLI process
@@ -119,6 +161,7 @@ export class CopilotService {
 			env: cleanEnv(),
 			...(this.githubToken ? {githubToken: this.githubToken} : {}),
 			...(this.useLoggedInUser !== undefined ? {useLoggedInUser: this.useLoggedInUser} : {}),
+			...(this.onListModels ? {onListModels: this.onListModels} : {}),
 		});
 	}
 
@@ -229,15 +272,20 @@ export class CopilotService {
 		model?: string;
 		systemMessage?: string;
 		customAgents?: CustomAgentConfig[];
+		agent?: string;
 		onPermissionRequest?: PermissionHandler;
 		onUserInputRequest?: UserInputHandler;
+		onElicitationRequest?: ElicitationHandler;
 		attachments?: MessageOptions['attachments'];
 	}): Promise<string | undefined> {
 		const session = await this.createSession({
 			model: options.model,
+			agent: options.agent,
 			onPermissionRequest: options.onPermissionRequest ?? approveAll,
 			...(options.onUserInputRequest ? {onUserInputRequest: options.onUserInputRequest} : {}),
+			...(options.onElicitationRequest ? {onElicitationRequest: options.onElicitationRequest} : {}),
 			customAgents: options.customAgents,
+			...(options.agent ? {agent: options.agent} : {}),
 			...(options.systemMessage
 				? {systemMessage: {content: options.systemMessage}}
 				: {}),
@@ -266,15 +314,20 @@ export class CopilotService {
 		model?: string;
 		systemMessage?: string;
 		customAgents?: CustomAgentConfig[];
+		agent?: string;
 		onPermissionRequest?: PermissionHandler;
 		onUserInputRequest?: UserInputHandler;
+		onElicitationRequest?: ElicitationHandler;
 		attachments?: MessageOptions['attachments'];
 	}): Promise<{content: string | undefined; sessionId: string}> {
 		const session = await this.createSession({
 			model: options.model,
+			agent: options.agent,
 			onPermissionRequest: options.onPermissionRequest ?? approveAll,
 			...(options.onUserInputRequest ? {onUserInputRequest: options.onUserInputRequest} : {}),
+			...(options.onElicitationRequest ? {onElicitationRequest: options.onElicitationRequest} : {}),
 			customAgents: options.customAgents,
+			...(options.agent ? {agent: options.agent} : {}),
 			...(options.systemMessage
 				? {systemMessage: {content: options.systemMessage}}
 				: {}),
@@ -337,4 +390,10 @@ export type {
 	SessionListFilter,
 	ProviderConfig,
 	ReasoningEffort,
+	ElicitationHandler,
+	ElicitationContext,
+	ElicitationResult,
+	ElicitationSchema,
+	ElicitationSchemaField,
+	ElicitationFieldValue,
 };

@@ -261,6 +261,23 @@ export function installTriggersPanel(ViewClass: {prototype: unknown}): void {
 					void this.app.workspace.getLeaf(false).openFile(file);
 				}
 			});
+
+			// Context menu with "Fire trigger" (only when enabled)
+			if (trigger.enabled) {
+				item.addEventListener('contextmenu', (e) => {
+					e.preventDefault();
+					e.stopPropagation();
+					const menu = new Menu();
+					menu.addItem(mi => mi
+						.setTitle('Fire trigger')
+						.setIcon('play')
+						.onClick(() => {
+							void this.fireTriggerInBackground(trigger);
+							new Notice(`Trigger fired: ${trigger.name}`);
+						}));
+					menu.showAtMouseEvent(e);
+				});
+			}
 		}
 	};
 

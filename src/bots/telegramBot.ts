@@ -371,6 +371,7 @@ export class TelegramBotService {
 			...(provider ? {provider} : {}),
 			...(Object.keys(mcpServers).length > 0 ? {mcpServers} : {}),
 			...(customAgents.length > 0 ? {customAgents} : {}),
+			...(defaultAgentName ? {agent: defaultAgentName} : {}),
 			...(skillDirs.length > 0 ? {skillDirectories: skillDirs} : {}),
 			...(disabledSkills.length > 0 ? {disabledSkills} : {}),
 		};

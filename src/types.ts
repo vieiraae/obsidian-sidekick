@@ -55,7 +55,7 @@ export interface PromptConfig {
 
 /** An attachment added to a chat message. */
 export interface ChatAttachment {
-	type: 'file' | 'directory' | 'clipboard' | 'image' | 'selection';
+	type: 'file' | 'directory' | 'clipboard' | 'image' | 'selection' | 'blob';
 	name: string;
 	/** Vault-relative path (for files, directories, images, selections) or absolute OS path when `absolutePath` is true. */
 	path?: string;
@@ -63,6 +63,10 @@ export interface ChatAttachment {
 	content?: string;
 	/** When true, `path` is an absolute OS path (not vault-relative). */
 	absolutePath?: boolean;
+	/** Base64-encoded binary data (for blob attachments). */
+	data?: string;
+	/** MIME type of the binary data (for blob attachments). */
+	mimeType?: string;
 	/** Selection range (1-based line numbers). */
 	selection?: {
 		startLine: number;

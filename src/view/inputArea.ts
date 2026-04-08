@@ -1,4 +1,4 @@
-import {MarkdownView, Menu, Notice, TFile, TFolder, normalizePath, setIcon} from 'obsidian';
+import {MarkdownView, Menu, Notice, TFile, TFolder, setIcon} from 'obsidian';
 import type {SidekickView} from '../sidekickView';
 import type {PromptConfig, SelectionInfo} from '../types';
 import {VaultScopeModal} from '../modals/vaultScopeModal';
@@ -10,8 +10,7 @@ declare module '../sidekickView' {
 		handleClipboard(): Promise<void>;
 		handleImagePaste(blob: File): Promise<void>;
 		handleFileDrop(e: DragEvent): void;
-		ensureFolderExists(folderPath: string): Promise<void>;
-		getImageAttachmentFolder(): string;
+
 		renderAttachments(): void;
 		renderScopeBar(): void;
 		renderActiveNoteBar(): void;
@@ -235,16 +234,17 @@ export function installInputArea(ViewClass: {prototype: unknown}): void {
 	proto.handleImagePaste = async function (blob: File): Promise<void> {
 		try {
 			const buffer = await blob.arrayBuffer();
-			const ext = blob.type === 'image/png' ? 'png' : blob.type === 'image/jpeg' ? 'jpg' : 'png';
+			const bytes = new Uint8Array(buffer);
+			let binary = '';
+			for (let i = 0; i < bytes.length; i++) {
+				binary += String.fromCharCode(bytes[i]!);
+			}
+			const base64 = btoa(binary);
+			const mimeType = blob.type || 'image/png';
+			const ext = mimeType === 'image/png' ? 'png' : mimeType === 'image/jpeg' ? 'jpg' : 'png';
 			const name = `paste-${Date.now()}.${ext}`;
-			const folder = normalizePath(this.getImageAttachmentFolder());
 
-			await this.ensureFolderExists(folder);
-
-			const filePath = normalizePath(`${folder}/${name}`);
-			await this.app.vault.createBinary(filePath, buffer);
-
-			this.attachments.push({type: 'image', name, path: filePath});
+			this.attachments.push({type: 'blob', name, data: base64, mimeType});
 			this.renderAttachments();
 			new Notice('Image attached.');
 		} catch (e) {
@@ -337,34 +337,6 @@ export function installInputArea(ViewClass: {prototype: unknown}): void {
 			this.renderAttachments();
 			new Notice(`${attached} file${attached > 1 ? 's' : ''} attached.`);
 		}
-	};
-
-	/** Recursively create a folder path if it doesn't already exist. */
-	proto.ensureFolderExists = async function (folderPath: string): Promise<void> {
-		if (this.app.vault.getAbstractFileByPath(folderPath)) return;
-		const parts = folderPath.split('/');
-		let current = '';
-		for (const part of parts) {
-			current = current ? `${current}/${part}` : part;
-			if (!this.app.vault.getAbstractFileByPath(current)) {
-				await this.app.vault.createFolder(current);
-			}
-		}
-	};
-
-	/**
-	 * Resolve the folder where pasted images are saved.
-	 * Uses the Obsidian "Attachment folder path" setting + a "sidekick" subfolder.
-	 * Falls back to ".sidekick-attachments" at the vault root.
-	 */
-	proto.getImageAttachmentFolder = function (): string {
-		const configured = (this.app.vault as unknown as {getConfig: (key: string) => unknown}).getConfig('attachmentFolderPath') as string | undefined;
-		if (configured && configured !== '/' && configured !== './' && configured !== '.') {
-			// Obsidian attachment folder is set — use a "sidekick" subfolder inside it
-			return `${configured}/sidekick`;
-		}
-		// No folder configured — use fallback at vault root
-		return '.sidekick-attachments';
 	};
 
 	proto.renderAttachments = function (): void {
