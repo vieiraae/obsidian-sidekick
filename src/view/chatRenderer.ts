@@ -30,10 +30,13 @@ declare module '../sidekickView' {
 		completeToolCallBlock(toolCallId: string, success: boolean, result?: {content?: string; detailedContent?: string}, error?: {message: string}): void;
 		renderWelcome(): void;
 		updateSendButton(): void;
+		renderReasoningBlock(reasoning: string, parent: HTMLElement): Promise<void>;
 		startReasoningBlock(): void;
 		appendReasoningDelta(delta: string): void;
+		syncReasoningContent(content: string): void;
 		doFullReasoningRender(): Promise<void>;
 		finalizeReasoning(): void;
+		clearReasoningState(): void;
 	}
 }
 
@@ -196,6 +199,10 @@ export function installChatRenderer(ViewClass: {prototype: unknown}): void {
 			}
 		}
 
+		if (msg.role === 'assistant' && msg.reasoning) {
+			void this.renderReasoningBlock(msg.reasoning, bodyWrapper);
+		}
+
 		const body = bodyWrapper.createDiv({cls: 'sidekick-msg-body'});
 
 		if (msg.role === 'assistant') {
@@ -215,6 +222,16 @@ export function installChatRenderer(ViewClass: {prototype: unknown}): void {
 			});
 		}
 		return Promise.resolve();
+	};
+
+	proto.renderReasoningBlock = function (reasoning: string, parent: HTMLElement): Promise<void> {
+		const details = parent.createEl('details', {cls: 'sidekick-reasoning'});
+		const summary = details.createEl('summary', {cls: 'sidekick-reasoning-summary'});
+		const iconEl = summary.createSpan({cls: 'sidekick-reasoning-icon'});
+		setIcon(iconEl, 'lightbulb');
+		summary.appendText('Reasoning');
+		const body = details.createDiv({cls: 'sidekick-reasoning-body'});
+		return renderMarkdownSafe(this.app, reasoning, body, this.streamingComponent ?? this);
 	};
 
 	/**
@@ -303,7 +320,11 @@ export function installChatRenderer(ViewClass: {prototype: unknown}): void {
 	// ── Reasoning streaming ──────────────────────────────────────
 
 	proto.startReasoningBlock = function (): void {
-		if (!this.streamingWrapperEl || this.reasoningEl) return;
+		if (this.reasoningEl && !this.reasoningEl.isConnected) {
+			this.reasoningEl = null;
+			this.reasoningBodyEl = null;
+		}
+		if (!this.streamingWrapperEl || !this.streamingBodyEl || this.reasoningEl) return;
 
 		// Remove the thinking placeholder from the answer body
 		const thinking = this.streamingBodyEl?.querySelector('.sidekick-thinking');
@@ -335,6 +356,7 @@ export function installChatRenderer(ViewClass: {prototype: unknown}): void {
 		if (!this.reasoningEl) {
 			this.startReasoningBlock();
 		}
+		this.reasoningComplete = false;
 		this.streamingReasoning += delta;
 		if (this.reasoningBodyEl) {
 			this.reasoningBodyEl.appendText(delta);
@@ -348,8 +370,21 @@ export function installChatRenderer(ViewClass: {prototype: unknown}): void {
 		this.scrollToBottom();
 	};
 
+	proto.syncReasoningContent = function (content: string): void {
+		if (!content) return;
+		if (!this.reasoningEl) {
+			this.startReasoningBlock();
+		}
+		this.streamingReasoning = content;
+		if (this.fullReasoningRenderTimer) {
+			clearTimeout(this.fullReasoningRenderTimer);
+			this.fullReasoningRenderTimer = null;
+		}
+		void this.doFullReasoningRender();
+	};
+
 	proto.doFullReasoningRender = async function (): Promise<void> {
-		if (!this.reasoningBodyEl || !this.streamingReasoning) return;
+		if (!this.reasoningBodyEl || !this.reasoningBodyEl.isConnected || !this.streamingReasoning) return;
 		this.reasoningBodyEl.empty();
 		await renderMarkdownSafe(this.app, this.streamingReasoning, this.reasoningBodyEl, this.streamingComponent ?? this);
 		this.scrollToBottom();
@@ -388,6 +423,17 @@ export function installChatRenderer(ViewClass: {prototype: unknown}): void {
 			dots.createSpan({cls: 'sidekick-dot', text: '.'});
 			dots.createSpan({cls: 'sidekick-dot', text: '.'});
 		}
+	};
+
+	proto.clearReasoningState = function (): void {
+		if (this.fullReasoningRenderTimer) {
+			clearTimeout(this.fullReasoningRenderTimer);
+			this.fullReasoningRenderTimer = null;
+		}
+		this.streamingReasoning = '';
+		this.reasoningEl = null;
+		this.reasoningBodyEl = null;
+		this.reasoningComplete = false;
 	};
 
 	/**
@@ -435,12 +481,16 @@ export function installChatRenderer(ViewClass: {prototype: unknown}): void {
 	proto.finalizeStreamingMessage = function (): void {
 		// Always remove any lingering thinking/processing indicator
 		this.removeProcessingIndicator();
+		if (this.streamingReasoning && !this.reasoningComplete) {
+			this.finalizeReasoning();
+		}
 
-		if (this.streamingContent) {
+		if (this.streamingContent || this.streamingReasoning) {
 			const msg: ChatMessage = {
 				id: `a-${Date.now()}`,
 				role: 'assistant',
 				content: this.streamingContent,
+				reasoning: this.streamingReasoning || undefined,
 				timestamp: Date.now(),
 			};
 			this.messages.push(msg);
@@ -454,7 +504,7 @@ export function installChatRenderer(ViewClass: {prototype: unknown}): void {
 		if (this.streamingBodyEl && this.streamingContent) {
 			this.streamingBodyEl.empty();
 			void renderMarkdownSafe(this.app, this.streamingContent, this.streamingBodyEl, this.streamingComponent ?? this);
-		} else if (this.streamingBodyEl && !this.streamingContent) {
+		} else if (this.streamingBodyEl && !this.streamingContent && !this.streamingReasoning) {
 			// No text was streamed — show a subtle fallback
 			this.streamingBodyEl.empty();
 			this.streamingBodyEl.createDiv({
@@ -473,15 +523,7 @@ export function installChatRenderer(ViewClass: {prototype: unknown}): void {
 		this.toolCallsContainer = null;
 		this.activeToolCalls.clear();
 
-		// Reset reasoning streaming state
-		if (this.fullReasoningRenderTimer) {
-			clearTimeout(this.fullReasoningRenderTimer);
-			this.fullReasoningRenderTimer = null;
-		}
-		this.streamingReasoning = '';
-		this.reasoningEl = null;
-		this.reasoningBodyEl = null;
-		this.reasoningComplete = false;
+		this.clearReasoningState();
 
 		if (this.streamingComponent) {
 			this.removeChild(this.streamingComponent);

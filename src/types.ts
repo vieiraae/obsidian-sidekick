@@ -38,6 +38,7 @@ export interface ChatMessage {
 	id: string;
 	role: 'user' | 'assistant' | 'info';
 	content: string;
+	reasoning?: string;
 	timestamp: number;
 	attachments?: ChatAttachment[];
 }

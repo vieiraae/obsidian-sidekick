@@ -418,6 +418,8 @@ export function installSessionSidebar(ViewClass: {prototype: unknown}): void {
 			messages: [...this.messages],
 			isStreaming: this.isStreaming,
 			streamingContent: this.streamingContent,
+			streamingReasoning: this.streamingReasoning,
+			reasoningComplete: this.reasoningComplete,
 			savedDom: fragment,
 			unsubscribers: [],
 			turnStartTime: this.turnStartTime,
@@ -429,6 +431,8 @@ export function installSessionSidebar(ViewClass: {prototype: unknown}): void {
 			streamingBodyEl: this.streamingBodyEl,
 			streamingWrapperEl: this.streamingWrapperEl,
 			toolCallsContainer: this.toolCallsContainer,
+			reasoningEl: this.reasoningEl,
+			reasoningBodyEl: this.reasoningBodyEl,
 		};
 
 		// If still streaming, attach background event routing
@@ -437,6 +441,13 @@ export function installSessionSidebar(ViewClass: {prototype: unknown}): void {
 		}
 
 		this.activeSessions.set(this.currentSessionId, bg);
+
+		if (this.fullRenderTimer) {
+			clearTimeout(this.fullRenderTimer);
+			this.fullRenderTimer = null;
+		}
+		this.lastFullRenderLen = 0;
+		this.clearReasoningState();
 
 		// Detach streaming component from the view (it lives in the bg now)
 		if (this.streamingComponent) {
@@ -457,11 +468,14 @@ export function installSessionSidebar(ViewClass: {prototype: unknown}): void {
 		this.messages = bg.messages;
 		this.isStreaming = bg.isStreaming;
 		this.streamingContent = bg.streamingContent;
+		this.streamingReasoning = bg.streamingReasoning;
+		this.reasoningComplete = bg.reasoningComplete;
 		this.turnStartTime = bg.turnStartTime;
 		this.turnToolsUsed = bg.turnToolsUsed;
 		this.turnSkillsUsed = bg.turnSkillsUsed;
 		this.turnUsage = bg.turnUsage;
 		this.configDirty = false;
+		this.lastFullRenderLen = 0;
 
 		this.chatContainer.empty();
 
@@ -472,8 +486,16 @@ export function installSessionSidebar(ViewClass: {prototype: unknown}): void {
 			this.streamingWrapperEl = bg.streamingWrapperEl;
 			this.toolCallsContainer = bg.toolCallsContainer;
 			this.activeToolCalls = bg.activeToolCalls;
+			this.reasoningEl = bg.reasoningEl;
+			this.reasoningBodyEl = bg.reasoningBodyEl;
 			this.chatContainer.appendChild(bg.savedDom);
 			bg.savedDom = null;
+			if (this.streamingReasoning && this.reasoningBodyEl) {
+				this.syncReasoningContent(this.streamingReasoning);
+				if (this.reasoningComplete) {
+					this.finalizeReasoning();
+				}
+			}
 			// Re-render the streaming content that accumulated while in background
 			if (this.streamingContent && this.streamingBodyEl) {
 				void this.updateStreamingRender();
@@ -484,6 +506,7 @@ export function installSessionSidebar(ViewClass: {prototype: unknown}): void {
 			this.streamingBodyEl = null;
 			this.streamingWrapperEl = null;
 			this.toolCallsContainer = null;
+			this.clearReasoningState();
 			this.activeToolCalls.clear();
 			const renderPromises: Promise<void>[] = [];
 			for (const msg of this.messages) {
@@ -518,11 +541,29 @@ export function installSessionSidebar(ViewClass: {prototype: unknown}): void {
 			session.on('assistant.turn_start', () => {
 				if (bg.turnStartTime === 0) bg.turnStartTime = Date.now();
 			}),
+			session.on('assistant.reasoning_delta', (event) => {
+				bg.streamingReasoning += event.data.deltaContent;
+				bg.reasoningComplete = false;
+			}),
+			session.on('assistant.reasoning', (event) => {
+				if (event.data.content) {
+					bg.streamingReasoning = event.data.content;
+				}
+				bg.reasoningComplete = bg.streamingReasoning.length > 0;
+			}),
 			session.on('assistant.message_delta', (event) => {
 				bg.streamingContent += event.data.deltaContent;
 				// No DOM rendering — session is hidden
 			}),
-			session.on('assistant.message', () => { /* accumulated via deltas */ }),
+			session.on('assistant.message', (event) => {
+				if (typeof event.data.reasoningText === 'string' && event.data.reasoningText.length > 0) {
+					bg.streamingReasoning = event.data.reasoningText;
+					bg.reasoningComplete = true;
+				}
+				if (typeof event.data.content === 'string' && event.data.content !== bg.streamingContent) {
+					bg.streamingContent = event.data.content;
+				}
+			}),
 			session.on('assistant.usage', (event) => {
 				const d = event.data;
 				if (!bg.turnUsage) {
@@ -543,18 +584,23 @@ export function installSessionSidebar(ViewClass: {prototype: unknown}): void {
 			}),
 			session.on('session.idle', () => {
 				// Finalize the background streaming turn
-				if (bg.streamingContent) {
+				if (bg.streamingContent || bg.streamingReasoning) {
 					bg.messages.push({
 						id: `a-${Date.now()}`,
 						role: 'assistant',
 						content: bg.streamingContent,
+						reasoning: bg.streamingReasoning || undefined,
 						timestamp: Date.now(),
 					});
 				}
 				bg.streamingContent = '';
+				bg.streamingReasoning = '';
+				bg.reasoningComplete = false;
 				bg.streamingBodyEl = null;
 				bg.streamingWrapperEl = null;
 				bg.toolCallsContainer = null;
+				bg.reasoningEl = null;
+				bg.reasoningBodyEl = null;
 				bg.activeToolCalls.clear();
 				bg.streamingComponent = null;
 				bg.turnStartTime = 0;
@@ -575,9 +621,13 @@ export function installSessionSidebar(ViewClass: {prototype: unknown}): void {
 				});
 				bg.isStreaming = false;
 				bg.streamingContent = '';
+				bg.streamingReasoning = '';
+				bg.reasoningComplete = false;
 				bg.streamingBodyEl = null;
 				bg.streamingWrapperEl = null;
 				bg.toolCallsContainer = null;
+				bg.reasoningEl = null;
+				bg.reasoningBodyEl = null;
 				bg.activeToolCalls.clear();
 				bg.streamingComponent = null;
 				this.renderSessionList();
@@ -618,11 +668,17 @@ export function installSessionSidebar(ViewClass: {prototype: unknown}): void {
 
 		// Clear UI for the new session
 		this.messages = [];
+		if (this.fullRenderTimer) {
+			clearTimeout(this.fullRenderTimer);
+			this.fullRenderTimer = null;
+		}
 		this.streamingContent = '';
+		this.lastFullRenderLen = 0;
 		this.streamingBodyEl = null;
 		this.streamingWrapperEl = null;
 		this.toolCallsContainer = null;
 		this.activeToolCalls.clear();
+		this.clearReasoningState();
 		if (this.streamingComponent) {
 			this.removeChild(this.streamingComponent);
 			this.streamingComponent = null;
@@ -650,6 +706,7 @@ export function installSessionSidebar(ViewClass: {prototype: unknown}): void {
 				systemContent: agent?.instructions || undefined,
 			});
 
+			this.earlyEventBuffer = [];
 			const session = await this.plugin.copilot!.resumeSession(sessionId, {
 				...sessionConfig,
 			});
@@ -666,6 +723,7 @@ export function installSessionSidebar(ViewClass: {prototype: unknown}): void {
 			// Load message history from SDK
 			const events = await session.getMessages();
 			const renderPromises: Promise<void>[] = [];
+			let pendingReasoning: string | undefined;
 			for (const event of events) {
 				if (event.type === 'user.message') {
 					const msg: ChatMessage = {
@@ -676,15 +734,23 @@ export function installSessionSidebar(ViewClass: {prototype: unknown}): void {
 					};
 					this.messages.push(msg);
 					renderPromises.push(this.renderMessageBubble(msg));
+					pendingReasoning = undefined;
+				} else if (event.type === 'assistant.reasoning') {
+					pendingReasoning = event.data.content || pendingReasoning;
 				} else if (event.type === 'assistant.message') {
+					const reasoning = typeof event.data.reasoningText === 'string' && event.data.reasoningText.length > 0
+						? event.data.reasoningText
+						: pendingReasoning;
 					const msg: ChatMessage = {
 						id: event.id,
 						role: 'assistant',
 						content: event.data.content,
+						reasoning,
 						timestamp: new Date(event.timestamp).getTime(),
 					};
 					this.messages.push(msg);
 					renderPromises.push(this.renderMessageBubble(msg));
+					pendingReasoning = undefined;
 				}
 			}
 			await Promise.all(renderPromises);
