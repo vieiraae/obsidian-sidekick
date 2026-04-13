@@ -140,7 +140,7 @@ export function installConfigToolbar(ViewClass: { prototype: unknown }): void {
 							// Mid-session reasoning change via setModel()
 							void this.currentSession.setModel(
 								this.selectedModel,
-								newEffort ? {reasoningEffort: newEffort as ReasoningEffort} : undefined,
+								newEffort ? {reasoningEffort: newEffort} : undefined,
 							);
 						} else {
 							this.configDirty = true;
