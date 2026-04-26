@@ -685,7 +685,9 @@ export class SidekickView extends ItemView {
 				if (typeof data.content === 'string' && data.content.length > 0) {
 					this.syncReasoningContent(data.content);
 				}
-				this.finalizeReasoning();
+				if (this.streamingReasoning.length > 0 && !this.reasoningComplete) {
+					this.finalizeReasoning();
+				}
 				break;
 			case 'assistant.message_delta':
 				this.appendDelta(data.deltaContent as string);
