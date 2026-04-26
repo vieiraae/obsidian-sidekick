@@ -9,6 +9,8 @@ export interface BackgroundSession {
 	messages: ChatMessage[];
 	isStreaming: boolean;
 	streamingContent: string;
+	streamingReasoning: string;
+	reasoningComplete: boolean;
 	/** Preserved DOM from chat container when the session is hidden. */
 	savedDom: DocumentFragment | null;
 	/** Event unsubscribers for this session. */
@@ -24,4 +26,6 @@ export interface BackgroundSession {
 	streamingBodyEl: HTMLElement | null;
 	streamingWrapperEl: HTMLElement | null;
 	toolCallsContainer: HTMLElement | null;
+	reasoningEl: HTMLDetailsElement | null;
+	reasoningBodyEl: HTMLElement | null;
 }

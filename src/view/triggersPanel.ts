@@ -392,6 +392,8 @@ export function installTriggersPanel(ViewClass: {prototype: unknown}): void {
 				}],
 				isStreaming: true,
 				streamingContent: '',
+				streamingReasoning: '',
+				reasoningComplete: false,
 				savedDom: null,
 				unsubscribers: [],
 				turnStartTime: Date.now(),
@@ -403,6 +405,8 @@ export function installTriggersPanel(ViewClass: {prototype: unknown}): void {
 				streamingBodyEl: null,
 				streamingWrapperEl: null,
 				toolCallsContainer: null,
+				reasoningEl: null,
+				reasoningBodyEl: null,
 			};
 
 			this.registerBackgroundEvents(bg);

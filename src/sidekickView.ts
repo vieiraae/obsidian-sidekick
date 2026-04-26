@@ -75,6 +75,13 @@ export class SidekickView extends ItemView {
 	lastFullRenderLen = 0;
 	fullRenderTimer: ReturnType<typeof setTimeout> | null = null;
 
+	// ── Reasoning streaming state ──────────────────────────────
+	streamingReasoning = '';
+	reasoningEl: HTMLDetailsElement | null = null;
+	reasoningBodyEl: HTMLElement | null = null;
+	reasoningComplete = false;
+	fullReasoningRenderTimer: ReturnType<typeof setTimeout> | null = null;
+
 	// ── Turn-level metadata ────────────────────────────────────
 	turnStartTime = 0;
 	turnToolsUsed: string[] = [];
@@ -536,6 +543,8 @@ export class SidekickView extends ItemView {
 		// Begin streaming
 		this.isStreaming = true;
 		this.streamingContent = '';
+		this.lastFullRenderLen = 0;
+		this.clearReasoningState();
 		this.updateSendButton();
 		this.renderSessionList();  // Show green active dot
 		this.addAssistantPlaceholder();
@@ -628,6 +637,7 @@ export class SidekickView extends ItemView {
 			selectedAgentName: this.selectedAgent || undefined,
 		});
 
+		this.earlyEventBuffer = [];
 		this.currentSession = await this.plugin.copilot!.createSession(sessionConfig);
 		this.currentSessionId = this.currentSession.sessionId;
 
@@ -668,11 +678,31 @@ export class SidekickView extends ItemView {
 					this.turnStartTime = Date.now();
 				}
 				break;
+			case 'assistant.reasoning_delta':
+				this.appendReasoningDelta(data.deltaContent as string);
+				break;
+			case 'assistant.reasoning':
+				if (typeof data.content === 'string' && data.content.length > 0) {
+					this.syncReasoningContent(data.content);
+				}
+				if (this.streamingReasoning.length > 0 && !this.reasoningComplete) {
+					this.finalizeReasoning();
+				}
+				break;
 			case 'assistant.message_delta':
 				this.appendDelta(data.deltaContent as string);
 				break;
 			case 'assistant.message':
-				// Content already accumulated via deltas
+				if (typeof data.reasoningText === 'string' && data.reasoningText.length > 0) {
+					this.syncReasoningContent(data.reasoningText);
+					if (!this.reasoningComplete) this.finalizeReasoning();
+				}
+				if (typeof data.content === 'string' && data.content !== this.streamingContent) {
+					this.streamingContent = data.content;
+					if (this.streamingBodyEl) {
+						void this.updateStreamingRender();
+					}
+				}
 				break;
 			case 'assistant.usage': {
 				const d = data as {inputTokens?: number; outputTokens?: number; cacheReadTokens?: number; cacheWriteTokens?: number; model?: string};
@@ -694,6 +724,9 @@ export class SidekickView extends ItemView {
 				break;
 			}
 			case 'session.idle':
+				if (this.streamingReasoning && !this.reasoningComplete) {
+					this.finalizeReasoning();
+				}
 				this.finalizeStreamingMessage();
 				break;
 			case 'session.error':
@@ -738,6 +771,8 @@ export class SidekickView extends ItemView {
 		// don't go through buildSessionConfig's onEvent.
 		this.eventUnsubscribers.push(
 			session.on('assistant.turn_start', (event) => { this.handleSessionEvent(event); }),
+			session.on('assistant.reasoning_delta', (event) => { this.handleSessionEvent(event); }),
+			session.on('assistant.reasoning', (event) => { this.handleSessionEvent(event); }),
 			session.on('assistant.message_delta', (event) => { this.handleSessionEvent(event); }),
 			session.on('assistant.message', (event) => { this.handleSessionEvent(event); }),
 			session.on('assistant.usage', (event) => { this.handleSessionEvent(event); }),
@@ -752,7 +787,7 @@ export class SidekickView extends ItemView {
 	unsubscribeEvents(): void {
 		for (const unsub of this.eventUnsubscribers) unsub();
 		this.eventUnsubscribers = [];
-		this.earlyEventBuffer = [];
+		this.earlyEventBuffer = EMPTY_EVENT_BUFFER as import('./copilot').SessionEvent[];
 	}
 
 	async disconnectSession(): Promise<void> {
@@ -788,11 +823,17 @@ export class SidekickView extends ItemView {
 		}
 		this.currentSessionId = null;
 		this.messages = [];
+		if (this.fullRenderTimer) {
+			clearTimeout(this.fullRenderTimer);
+			this.fullRenderTimer = null;
+		}
 		this.streamingContent = '';
+		this.lastFullRenderLen = 0;
 		this.streamingBodyEl = null;
 		this.streamingWrapperEl = null;
 		this.toolCallsContainer = null;
 		this.activeToolCalls.clear();
+		this.clearReasoningState();
 		if (this.streamingComponent) {
 			this.removeChild(this.streamingComponent);
 			this.streamingComponent = null;
