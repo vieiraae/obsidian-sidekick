@@ -414,14 +414,18 @@ export function installChatRenderer(ViewClass: {prototype: unknown}): void {
 			}
 		}
 
-		// Restore the thinking indicator in the answer body if no answer content has arrived yet
+		// Restore the thinking indicator in the answer body if no answer content has arrived yet,
+		// but avoid duplicating an existing placeholder.
 		if (!this.streamingContent && this.streamingBodyEl) {
-			const thinking = this.streamingBodyEl.createDiv({cls: 'sidekick-thinking'});
-			thinking.createSpan({text: 'Thinking'});
-			const dots = thinking.createSpan({cls: 'sidekick-thinking-dots'});
-			dots.createSpan({cls: 'sidekick-dot', text: '.'});
-			dots.createSpan({cls: 'sidekick-dot', text: '.'});
-			dots.createSpan({cls: 'sidekick-dot', text: '.'});
+			const existingThinking = this.streamingBodyEl.querySelector('.sidekick-thinking');
+			if (!existingThinking) {
+				const thinking = this.streamingBodyEl.createDiv({cls: 'sidekick-thinking'});
+				thinking.createSpan({text: 'Thinking'});
+				const dots = thinking.createSpan({cls: 'sidekick-thinking-dots'});
+				dots.createSpan({cls: 'sidekick-dot', text: '.'});
+				dots.createSpan({cls: 'sidekick-dot', text: '.'});
+				dots.createSpan({cls: 'sidekick-dot', text: '.'});
+			}
 		}
 	};
 
