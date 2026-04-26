@@ -493,7 +493,10 @@ export function installSessionSidebar(ViewClass: {prototype: unknown}): void {
 			if (this.streamingReasoning && this.reasoningBodyEl) {
 				this.syncReasoningContent(this.streamingReasoning);
 				if (this.reasoningComplete) {
+					const restoredReasoningComplete = this.reasoningComplete;
+					this.reasoningComplete = false;
 					this.finalizeReasoning();
+					this.reasoningComplete = restoredReasoningComplete;
 				}
 			}
 			// Re-render the streaming content that accumulated while in background
