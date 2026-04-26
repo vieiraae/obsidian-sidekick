@@ -1,10 +1,13 @@
-import {Plugin} from 'obsidian';
+import {MarkdownView, Notice, Plugin, requestUrl} from 'obsidian';
 import {DEFAULT_SETTINGS, SidekickSettings, SidekickSettingTab, SECURE_FIELDS, loadSecureField, saveSecureField} from "./settings";
 import {CopilotService} from "./copilot";
 import {SidekickView, SIDEKICK_VIEW_TYPE} from "./sidekickView";
-import {registerEditorMenu, registerFileMenu} from './editor/editorMenu';
-import {buildGhostTextExtension} from './editor/ghostText';
+import {registerEditorMenu, registerFileMenu, openSidekickView, showEditNoteModal, showStructureModal, runSelectionAction} from './editor/editorMenu';
+import {buildGhostTextExtension, triggerComplete} from './editor/ghostText';
 import {TelegramBotService} from './bots';
+import {TASKS} from './tasks';
+import {EditModal} from './modals/editModal';
+import type {EditorView} from '@codemirror/view';
 
 export default class SidekickPlugin extends Plugin {
 	settings!: SidekickSettings;
@@ -25,7 +28,125 @@ export default class SidekickPlugin extends Plugin {
 		this.addCommand({
 			id: 'open-chat',
 			name: 'Open chat',
+			hotkeys: [{modifiers: ['Mod', 'Shift'], key: 'k'}],
 			callback: () => void this.activateView(),
+		});
+
+		// Helper to get CM6 EditorView from active MarkdownView
+		const getEditorView = (): EditorView | null => {
+			const mdView = this.app.workspace.getActiveViewOfType(MarkdownView);
+			if (!mdView) return null;
+			return (mdView as unknown as {editor?: {cm?: EditorView}}).editor?.cm ?? null;
+		};
+
+		// Command: Chat with sidekick (send selection or open chat)
+		this.addCommand({
+			id: 'chat-with-sidekick',
+			name: 'Chat with sidekick',
+			hotkeys: [{modifiers: ['Mod', 'Shift'], key: 'l'}],
+			callback: () => {
+				const cmView = getEditorView();
+				if (cmView) {
+					const sel = cmView.state.selection.main;
+					if (!sel.empty) {
+						const text = cmView.state.sliceDoc(sel.from, sel.to);
+						const startLine = cmView.state.doc.lineAt(sel.from);
+						const endLine = cmView.state.doc.lineAt(sel.to);
+						const activeFile = this.app.workspace.getActiveFile();
+						openSidekickView(this, text, {
+							filePath: activeFile?.path,
+							fileName: activeFile?.name ?? 'unknown',
+							startLine: startLine.number,
+							startChar: sel.from - startLine.from,
+							endLine: endLine.number,
+							endChar: sel.to - endLine.from,
+						});
+						return;
+					}
+				}
+				openSidekickView(this);
+			},
+		});
+
+		// Command: Edit the note
+		this.addCommand({
+			id: 'edit-note',
+			name: 'Edit the note',
+			hotkeys: [{modifiers: ['Mod', 'Shift'], key: 'e'}],
+			editorCallback: (_editor, view) => {
+				const cmView = (view as unknown as {editor?: {cm?: EditorView}}).editor?.cm;
+				if (cmView) showEditNoteModal(this, cmView);
+			},
+		});
+
+		// Command: Structure and refine
+		this.addCommand({
+			id: 'structure-and-refine',
+			name: 'Structure and refine',
+			editorCallback: (_editor, view) => {
+				const cmView = (view as unknown as {editor?: {cm?: EditorView}}).editor?.cm;
+				if (cmView) showStructureModal(this, cmView);
+			},
+		});
+
+		// Command: Edit selection (advanced editing modal)
+		this.addCommand({
+			id: 'edit-selection',
+			name: 'Edit selection',
+			editorCallback: (_editor, view) => {
+				const cmView = (view as unknown as {editor?: {cm?: EditorView}}).editor?.cm;
+				if (!cmView) return;
+				const sel = cmView.state.selection.main;
+				if (sel.empty) {
+					new Notice('Sidekick: select some text first.');
+					return;
+				}
+				const selectedText = cmView.state.sliceDoc(sel.from, sel.to);
+				new EditModal(this, selectedText, (result: string) => {
+					const currentSel = cmView.state.selection.main;
+					cmView.dispatch({changes: {from: currentSel.from, to: currentSel.to, insert: result}});
+				}).open();
+			},
+		});
+
+		// Text-transform commands for each task
+		for (const task of TASKS) {
+			this.addCommand({
+				id: `text-action-${task.label.toLowerCase().replace(/\s+/g, '-')}`,
+				name: task.label,
+				editorCallback: (_editor, view) => {
+					const cmView = (view as unknown as {editor?: {cm?: EditorView}}).editor?.cm;
+					if (!cmView) return;
+					const sel = cmView.state.selection.main;
+					if (sel.empty) {
+						new Notice('Sidekick: select some text first.');
+						return;
+					}
+					const selectedText = cmView.state.sliceDoc(sel.from, sel.to);
+					void runSelectionAction(this, cmView, selectedText, task);
+				},
+			});
+		}
+
+		// Command: Toggle autocomplete
+		this.addCommand({
+			id: 'toggle-autocomplete',
+			name: 'Toggle autocomplete',
+			callback: async () => {
+				this.settings.autocompleteEnabled = !this.settings.autocompleteEnabled;
+				await this.saveData(this.settings);
+				new Notice(`Sidekick: autocomplete ${this.settings.autocompleteEnabled ? 'enabled' : 'disabled'}.`);
+			},
+		});
+
+		// Command: Trigger autocomplete
+		this.addCommand({
+			id: 'trigger-autocomplete',
+			name: 'Trigger autocomplete',
+			editorCallback: (_editor, view) => {
+				const cmView = (view as unknown as {editor?: {cm?: EditorView}}).editor?.cm;
+				if (cmView) cmView.dispatch({effects: triggerComplete.of(null)});
+			},
 		});
 
 		// Editor context menu (Sidekick submenu for selected text)
@@ -101,9 +222,9 @@ export default class SidekickPlugin extends Plugin {
 					? `${baseUrl}/api/tags`
 					: `${baseUrl}/v1/models`;
 
-				const resp = await fetch(url, {headers});
-				if (!resp.ok) return [];
-				const json = await resp.json() as Record<string, unknown>;
+				const resp = await requestUrl({url, headers});
+				if (resp.status < 200 || resp.status >= 300) return [];
+				const json = resp.json as Record<string, unknown>;
 
 				if (preset === 'ollama') {
 					// Ollama format: { models: [{ name, ... }] }
