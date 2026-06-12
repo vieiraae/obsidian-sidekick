@@ -1,6 +1,5 @@
-import {CopilotClient, CopilotSession, approveAll} from '@github/copilot-sdk';
+import {CopilotClient, CopilotSession, approveAll, RuntimeConnection} from '@github/copilot-sdk';
 import type {
-	ConnectionState,
 	CustomAgentConfig,
 	ModelInfo,
 	SessionConfig,
@@ -9,8 +8,8 @@ import type {
 	GetAuthStatusResponse,
 	AssistantMessageEvent,
 	MCPServerConfig,
-	MCPRemoteServerConfig,
-	MCPLocalServerConfig,
+	MCPHTTPServerConfig,
+	MCPStdioServerConfig,
 	SessionEvent,
 	SessionEventType,
 	MessageOptions,
@@ -123,6 +122,7 @@ function cleanEnv(): Record<string, string> {
  */
 export class CopilotService {
 	private client: CopilotClient | null = null;
+	private started = false;
 	private readonly cliPath: string | undefined;
 	private readonly cliUrl: string | undefined;
 	private readonly githubToken: string | undefined;
@@ -147,8 +147,8 @@ export class CopilotService {
 		if (this.cliUrl) {
 			// Remote mode — connect to existing server
 			return new CopilotClient({
-				cliUrl: this.cliUrl,
-				...(this.githubToken ? {githubToken: this.githubToken} : {}),
+				connection: RuntimeConnection.forUri(this.cliUrl),
+				...(this.githubToken ? {gitHubToken: this.githubToken} : {}),
 				...(this.onListModels ? {onListModels: this.onListModels} : {}),
 			});
 		}
@@ -156,10 +156,10 @@ export class CopilotService {
 		const cliPath = this.cliPath || await resolveDefaultCliPath();
 		const os = nodeRequire?.('node:os') as typeof import('node:os') ?? await import('node:os');
 		return new CopilotClient({
-			cliPath: cliPath,
-			cwd: os.homedir(),
+			connection: RuntimeConnection.forStdio({path: cliPath}),
+			workingDirectory: os.homedir(),
 			env: cleanEnv(),
-			...(this.githubToken ? {githubToken: this.githubToken} : {}),
+			...(this.githubToken ? {gitHubToken: this.githubToken} : {}),
 			...(this.useLoggedInUser !== undefined ? {useLoggedInUser: this.useLoggedInUser} : {}),
 			...(this.onListModels ? {onListModels: this.onListModels} : {}),
 		});
@@ -172,22 +172,27 @@ export class CopilotService {
 	async ensureConnected(): Promise<void> {
 		if (!this.client) {
 			this.client = await this.createClient();
+			this.started = false;
 		}
-		const state = this.client.getState();
-		if (state === 'connected') {
-			return;
-		}
-		if (state === 'error') {
-			// Previous client is broken — tear it down and recreate.
-			try { await this.client.forceStop(); } catch { /* ignore */ }
-			this.client = await this.createClient();
+		if (this.started) {
+			try {
+				// Verify the connection is still alive.
+				await this.client.getStatus();
+				return;
+			} catch {
+				// Previous client is broken — tear it down and recreate.
+				try { await this.client.forceStop(); } catch { /* ignore */ }
+				this.client = await this.createClient();
+				this.started = false;
+			}
 		}
 		await this.client.start();
+		this.started = true;
 	}
 
 	/** Current connection state. */
 	getState(): ConnectionState {
-		return this.client?.getState() ?? 'disconnected';
+		return this.started ? 'connected' : 'disconnected';
 	}
 
 	// ── Authentication ──────────────────────────────────────────────
@@ -343,7 +348,7 @@ export class CopilotService {
 	// ── Health ───────────────────────────────────────────────────────
 
 	/** Ping the Copilot CLI server to verify connectivity. */
-	async ping(): Promise<{message: string; timestamp: number}> {
+	async ping(): Promise<{message: string; timestamp: string; protocolVersion?: number}> {
 		await this.ensureConnected();
 		return await this.client!.ping();
 	}
@@ -357,6 +362,7 @@ export class CopilotService {
 	async stop(): Promise<void> {
 		if (!this.client) return;
 		const errors = await this.client.stop();
+		this.started = false;
 		if (errors.length > 0) {
 			console.error('Copilot service stop errors:', errors);
 			await this.client.forceStop();
@@ -366,18 +372,20 @@ export class CopilotService {
 
 export {approveAll};
 
+/** Connection state of the Copilot client. */
+export type ConnectionState = 'connected' | 'disconnected' | 'error';
+
 export type {
 	CopilotSession,
 	ModelInfo,
 	SessionMetadata,
-	ConnectionState,
 	GetAuthStatusResponse,
 	CustomAgentConfig,
 	AssistantMessageEvent,
 	SessionConfig,
 	MCPServerConfig,
-	MCPRemoteServerConfig,
-	MCPLocalServerConfig,
+	MCPHTTPServerConfig,
+	MCPStdioServerConfig,
 	SessionEvent,
 	SessionEventType,
 	MessageOptions,
