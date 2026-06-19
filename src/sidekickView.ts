@@ -58,6 +58,8 @@ export class SidekickView extends ItemView {
 	selectedModel = '';
 	enabledSkills: Set<string> = new Set();
 	enabledMcpServers: Set<string> = new Set();
+	/** MCP servers already reported as problematic this session (dedup for status notices). */
+	mcpWarnedServers: Set<string> = new Set();
 	attachments: ChatAttachment[] = [];
 	activeNotePath: string | null = null;
 	activeSelection: {filePath: string; fileName: string; text: string; startLine: number; startChar: number; endLine: number; endChar: number} | null = null;
@@ -628,6 +630,7 @@ export class SidekickView extends ItemView {
 			selectedAgentName: this.selectedAgent || undefined,
 		});
 
+		this.mcpWarnedServers.clear();
 		this.currentSession = await this.plugin.copilot!.createSession(sessionConfig);
 		this.currentSessionId = this.currentSession.sessionId;
 
@@ -715,6 +718,24 @@ export class SidekickView extends ItemView {
 			case 'skill.invoked':
 				this.turnSkillsUsed.push(data.name as string);
 				break;
+			case 'session.mcp_servers_loaded': {
+				const servers = (data.servers as Array<{name: string; status: string; error?: string}> | undefined) ?? [];
+				for (const s of servers) {
+					if (s.status === 'connected' || s.status === 'pending' || s.status === 'disabled') continue;
+					if (this.mcpWarnedServers.has(s.name)) continue;
+					this.mcpWarnedServers.add(s.name);
+					let msg: string;
+					if (s.status === 'needs-auth') {
+						msg = `MCP server "${s.name}" requires authentication and exposed no tools. For the GitHub server, set a GitHub token in **Settings → Sidekick**, or add an \`Authorization\` header to its entry in tools/mcp.json.`;
+					} else if (s.status === 'failed') {
+						msg = `MCP server "${s.name}" failed to connect${s.error ? `: ${s.error}` : ''}.`;
+					} else {
+						msg = `MCP server "${s.name}" is not configured (${s.status}); its tools are unavailable.`;
+					}
+					this.addInfoMessage(msg);
+				}
+				break;
+			}
 		}
 	}
 
@@ -746,6 +767,7 @@ export class SidekickView extends ItemView {
 			session.on('tool.execution_start', (event) => { this.handleSessionEvent(event); }),
 			session.on('tool.execution_complete', (event) => { this.handleSessionEvent(event); }),
 			session.on('skill.invoked', (event) => { this.handleSessionEvent(event); }),
+			session.on('session.mcp_servers_loaded', (event) => { this.handleSessionEvent(event); }),
 		);
 	}
 
@@ -819,7 +841,7 @@ export class SidekickView extends ItemView {
 		systemContent?: string;
 		selectedAgentName?: string;
 	}): SessionConfig {
-		const mcpServers = mapMcpServers(this.mcpServers, this.enabledMcpServers);
+		const mcpServers = mapMcpServers(this.mcpServers, this.enabledMcpServers, this.plugin.settings.githubToken || undefined);
 
 		// Skills
 		const basePath = this.getVaultBasePath();

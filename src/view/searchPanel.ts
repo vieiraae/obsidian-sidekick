@@ -308,7 +308,7 @@ export function installSearchPanel(ViewClass: { prototype: unknown }): void {
 		const basePath = this.getVaultBasePath();
 
 		// MCP servers (search-specific selection)
-		const mcpServers = mapMcpServers(this.mcpServers, this.searchEnabledMcpServers);
+		const mcpServers = mapMcpServers(this.mcpServers, this.searchEnabledMcpServers, this.plugin.settings.githubToken || undefined);
 
 		// Skills
 		const skillDirs: string[] = [];

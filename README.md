@@ -275,6 +275,19 @@ Configure external tool servers in `sidekick/tools/mcp.json`. Sidekick supports 
 
 The format also accepts `"mcpServers"` as the top-level key. Toggle servers from the **plug** icon.
 
+> **GitHub MCP server authentication:** The GitHub Copilot MCP endpoint (`https://api.githubcopilot.com/mcp/`) requires authentication. Set a GitHub token in **Settings → Sidekick** and Sidekick automatically sends it as the `Authorization` header for that server. Alternatively, add the header yourself (optionally via an [input variable](#keeping-secrets-out-of-mcpjson)):
+>
+> ```json
+> "github": {
+>   "type": "http",
+>   "url": "https://api.githubcopilot.com/mcp/",
+>   "headers": { "Authorization": "Bearer ${input:github_pat}" }
+> }
+> ```
+>
+> Without a token the server reports `needs-auth` and exposes no tools.
+
+
 ### Keeping secrets out of `mcp.json`
 
 Use **input variables** to avoid hardcoding API keys. Define an `"inputs"` array and reference values with `${input:variable-id}`:

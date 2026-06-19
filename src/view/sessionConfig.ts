@@ -3,10 +3,38 @@ import type {App} from 'obsidian';
 import type {MCPServerConfig, ModelInfo, MessageOptions} from '../copilot';
 import type {AgentConfig, McpServerEntry, ChatAttachment} from '../types';
 
+/** Host of the GitHub Copilot remote MCP server, which requires authentication. */
+const GITHUB_COPILOT_MCP_HOST = 'api.githubcopilot.com';
+
+/** Returns true if the URL points at the GitHub Copilot remote MCP server. */
+function isGitHubCopilotMcpUrl(url: string | undefined): boolean {
+	if (!url) return false;
+	try {
+		return new URL(url).hostname.toLowerCase() === GITHUB_COPILOT_MCP_HOST;
+	} catch {
+		return false;
+	}
+}
+
+/** Case-insensitive check for an existing Authorization header. */
+function hasAuthorizationHeader(headers: Record<string, string> | undefined): boolean {
+	if (!headers) return false;
+	return Object.keys(headers).some(k => k.toLowerCase() === 'authorization');
+}
+
 /**
  * Map MCP server entries to MCPServerConfig objects, filtering by enabled set.
+ *
+ * When `githubToken` is provided, it is injected as a Bearer `Authorization`
+ * header for the GitHub Copilot remote MCP server (api.githubcopilot.com),
+ * which now requires authentication. Servers that already declare their own
+ * Authorization header are left untouched.
  */
-export function mapMcpServers(mcpServers: McpServerEntry[], enabledMcpServers: Set<string>): Record<string, MCPServerConfig> {
+export function mapMcpServers(
+	mcpServers: McpServerEntry[],
+	enabledMcpServers: Set<string>,
+	githubToken?: string,
+): Record<string, MCPServerConfig> {
 	const result: Record<string, MCPServerConfig> = {};
 	for (const server of mcpServers) {
 		if (!enabledMcpServers.has(server.name)) continue;
@@ -15,11 +43,16 @@ export function mapMcpServers(mcpServers: McpServerEntry[], enabledMcpServers: S
 		const tools = (cfg['tools'] as string[] | undefined) ?? ['*'];
 
 		if (serverType === 'http' || serverType === 'sse') {
+			const url = cfg['url'] as string;
+			const headers = {...(cfg['headers'] as Record<string, string> | undefined)};
+			if (githubToken && isGitHubCopilotMcpUrl(url) && !hasAuthorizationHeader(headers)) {
+				headers['Authorization'] = `Bearer ${githubToken}`;
+			}
 			result[server.name] = {
 				type: serverType,
-				url: cfg['url'] as string,
+				url,
 				tools,
-				...(cfg['headers'] ? {headers: cfg['headers'] as Record<string, string>} : {}),
+				...(Object.keys(headers).length > 0 ? {headers} : {}),
 				...(cfg['timeout'] != null ? {timeout: cfg['timeout'] as number} : {}),
 			} as MCPServerConfig;
 		} else if (cfg['command']) {

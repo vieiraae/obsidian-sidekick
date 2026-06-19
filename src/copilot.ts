@@ -113,8 +113,97 @@ function cleanEnv(): Record<string, string> {
 			env[key] = value;
 		}
 	}
+	// GUI apps on macOS/Linux launch with a minimal PATH that often omits
+	// Homebrew/nvm/volta node locations, breaking stdio MCP servers spawned
+	// via `npx`/`node` (spawn ENOENT). Augment PATH with common install dirs
+	// that actually exist on disk.
+	env['PATH'] = augmentPath(env['PATH']);
 	return env;
 }
+
+/**
+ * Append common Node.js/tooling bin directories to PATH so the CLI subprocess
+ * can locate `node`/`npx` for stdio MCP servers. Only existing directories are
+ * added, and existing entries are preserved (no duplicates). Best-effort: if
+ * Node builtins are unavailable (mobile), the original value is returned.
+ */
+function augmentPath(currentPath: string | undefined): string {
+	const fs = nodeRequire?.('node:fs') as typeof import('node:fs') | undefined;
+	const os = nodeRequire?.('node:os') as typeof import('node:os') | undefined;
+	const path = nodeRequire?.('node:path') as typeof import('node:path') | undefined;
+	if (!fs || !os || !path) return currentPath ?? '';
+
+	const sep = process.platform === 'win32' ? ';' : ':';
+	const existing = (currentPath ?? '').split(sep).filter(Boolean);
+	const seen = new Set(existing);
+	const home = os.homedir();
+
+	const candidates: string[] = [
+		'/opt/homebrew/bin', '/opt/homebrew/sbin', // Apple Silicon Homebrew
+		'/usr/local/bin', '/usr/local/sbin',        // Intel Homebrew / common
+		'/opt/local/bin',                           // MacPorts
+		path.join(home, '.volta', 'bin'),           // Volta
+		path.join(home, '.local', 'bin'),           // pip/pipx, user installs
+		path.join(home, '.local', 'share', 'pnpm'), // pnpm (Linux)
+		path.join(home, 'Library', 'pnpm'),         // pnpm (macOS)
+		path.join(home, '.bun', 'bin'),             // Bun
+		'/usr/bin', '/bin', '/usr/sbin', '/sbin',
+	];
+
+	// nvm: append the bin dir of the most recent installed Node version.
+	try {
+		const nvmNode = path.join(home, '.nvm', 'versions', 'node');
+		if (fs.existsSync(nvmNode)) {
+			const versions = fs.readdirSync(nvmNode)
+				.filter(v => /^v?\d+\./.test(v))
+				.sort((a, b) => compareNodeVersions(a, b));
+			const latest = versions[versions.length - 1];
+			if (latest) candidates.push(path.join(nvmNode, latest, 'bin'));
+		}
+	} catch { /* ignore */ }
+
+	// fnm: append the bin dir of the most recent installed Node version.
+	try {
+		const fnmRoots = [
+			path.join(home, '.local', 'state', 'fnm_multishells'),
+			path.join(home, '.fnm', 'node-versions'),
+			path.join(home, 'Library', 'Application Support', 'fnm', 'node-versions'),
+		];
+		for (const root of fnmRoots) {
+			if (!fs.existsSync(root)) continue;
+			const versions = fs.readdirSync(root)
+				.filter(v => /^v?\d+\./.test(v))
+				.sort((a, b) => compareNodeVersions(a, b));
+			const latest = versions[versions.length - 1];
+			if (latest) candidates.push(path.join(root, latest, 'installation', 'bin'));
+		}
+	} catch { /* ignore */ }
+
+	const extra: string[] = [];
+	for (const dir of candidates) {
+		if (seen.has(dir)) continue;
+		try {
+			if (fs.existsSync(dir)) {
+				extra.push(dir);
+				seen.add(dir);
+			}
+		} catch { /* ignore */ }
+	}
+
+	return [...existing, ...extra].join(sep);
+}
+
+/** Compare two Node version strings (e.g. "v20.11.0" vs "v18.19.0"). */
+function compareNodeVersions(a: string, b: string): number {
+	const pa = a.replace(/^v/, '').split('.').map(n => parseInt(n, 10) || 0);
+	const pb = b.replace(/^v/, '').split('.').map(n => parseInt(n, 10) || 0);
+	for (let i = 0; i < Math.max(pa.length, pb.length); i++) {
+		const diff = (pa[i] ?? 0) - (pb[i] ?? 0);
+		if (diff !== 0) return diff;
+	}
+	return 0;
+}
+
 
 /**
  * Manages the CopilotClient lifecycle and provides high-level methods

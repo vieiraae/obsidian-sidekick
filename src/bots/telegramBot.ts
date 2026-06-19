@@ -306,7 +306,7 @@ export class TelegramBotService {
 		} else {
 			enabledServers = new Set(this.mcpServers.map(s => s.name));
 		}
-		const mcpServers = mapMcpServers(this.mcpServers, enabledServers);
+		const mcpServers = mapMcpServers(this.mcpServers, enabledServers, this.plugin.settings.githubToken || undefined);
 
 		// Skills
 		const skillDirs: string[] = [];
